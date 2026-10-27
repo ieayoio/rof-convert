@@ -178,50 +178,37 @@ server {
 
 ## 容器部署
 
-示例 Dockerfile：
+项目根目录提供 [Dockerfile](../Dockerfile)，包含：
 
-```dockerfile
-FROM rust:1.99-bookworm AS builder
+- Rust 多阶段构建，先缓存依赖层再复制源码
+- 默认使用 rsproxy Cargo 镜像与清华 Debian 镜像，适配中国大陆网络
+- 通过 `RUST_IMAGE`、`DEBIAN_IMAGE`、`CARGO_REGISTRY`、`DEBIAN_MIRROR` 构建参数覆盖基础镜像和软件源
+- 非 root 用户、`tini` 作为 PID 1、Docker `HEALTHCHECK`
+- 镜像内包含 `config/prod.toml`，通过 `ROF_ENV=prod` 启动
 
-WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY docs ./docs
-RUN cargo build --release --locked
-
-FROM debian:bookworm-slim
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       libreoffice-writer libreoffice-calc libreoffice-impress \
-       fonts-noto-cjk ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN useradd --system --uid 10001 --user-group \
-      --home-dir /var/lib/rof-convert rof-convert \
-    && install -d -m 700 -o rof-convert -g rof-convert \
-      /var/lib/rof-convert/tmp
-
-COPY --from=builder /build/target/release/rof-convert /usr/local/bin/rof-convert
-
-WORKDIR /opt/rof-convert
-COPY config ./config
-
-USER 10001
-ENV ROF_ENV=prod \
-    ROF_HOST=0.0.0.0 \
-    ROF_PORT=8080 \
-    ROF_TEMP_DIR=/var/lib/rof-convert/tmp
-
-EXPOSE 8080
-ENTRYPOINT ["rof-convert"]
-```
-
-构建和运行示例：
+构建：
 
 ```bash
+# 需要登录时先 docker login
+# 默认使用 rsproxy 和清华 Debian 镜像
 docker build -t rof-convert:0.1.0 .
 
+# Docker Hub 拉取慢时，可指定基础镜像代理
+docker build \
+  --build-arg RUST_IMAGE=<mirror>/library/rust:1.99-bookworm \
+  --build-arg DEBIAN_IMAGE=<mirror>/library/debian:bookworm-slim \
+  -t rof-convert:0.1.0 .
+
+# 需要替换软件源时
+docker build \
+  --build-arg CARGO_REGISTRY=sparse+https://mirrors.ustc.edu.cn/crates.io-index/ \
+  --build-arg DEBIAN_MIRROR=http://mirrors.ustc.edu.cn \
+  -t rof-convert:0.1.0 .
+```
+
+运行：
+
+```bash
 docker run --rm -p 8080:8080 \
   -e ROF_API_KEYS='replace-with-a-random-secret' \
   -v rof-convert-tmp:/var/lib/rof-convert/tmp \
@@ -230,8 +217,9 @@ docker run --rm -p 8080:8080 \
 
 注意：
 
-- 建议在 `.dockerignore` 中排除 `target/` 和 `data/`，避免构建上下文过大。
+- 建议在 `.dockerignore` 中排除 `target/` 和 `data/`，避免构建上下文过大。项目已提供 `.dockerignore`。
 - 镜像内包含 `config/prod.toml`，通过 `ROF_ENV=prod` 使用；自定义配置可通过挂载文件并设置 `ROF_CONFIG_FILE` 覆盖。
+- 生产环境运行时必须通过 `ROF_API_KEYS` 注入密钥；镜像内的 `config/prod.toml` 不保存真实密钥。
 - 挂载卷必须对容器内 UID `10001` 可写；必要时先修正卷权限。
 - 生产环境可增加 `--read-only`、`--tmpfs /tmp`、`--cap-drop=ALL`、`--security-opt no-new-privileges` 和内存/CPU 限制。LibreOffice 需要写入 `/tmp`，`--read-only` 时必须提供可写 tmpfs。
 - 不要把容器内 `/var/lib/rof-convert` 挂载为只读。

@@ -380,6 +380,9 @@ cargo test
 代码结构：
 
 ```text
+Dockerfile         # 多阶段生产镜像（国内构建镜像源）
+.dockerignore
+
 src/
 ├── main.rs        # 启动、日志、临时目录、优雅停机
 ├── config.rs      # 多环境配置文件、环境变量覆盖与校验
