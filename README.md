@@ -75,13 +75,22 @@ soffice --version
 ```bash
 cargo build --release
 
-mkdir -p ./data/tmp
-ROF_TEMP_DIR="$PWD/data/tmp" \
+# 默认加载 config/dev.toml，监听 127.0.0.1:8080
 ROF_API_KEYS='replace-with-a-random-secret' \
 ./target/release/rof-convert
 ```
 
-默认监听 `0.0.0.0:8080`。`ROF_API_KEYS` 为空时关闭鉴权，仅建议在受控的开发环境使用。
+开发配置使用 `./data/tmp` 作为任务目录，首次启动会自动创建。默认读取 `config/dev.toml`；需要生产配置时使用：
+
+```bash
+ROF_ENV=prod \
+ROF_API_KEYS='replace-with-a-random-secret' \
+./target/release/rof-convert
+```
+
+生产配置使用 `/var/lib/rof-convert/tmp`，需要先按[部署与运维](docs/deployment.md)创建目录并授权。随项目提供的 dev/prod 配置默认未设置 API Key，建议通过 `ROF_API_KEYS` 注入密钥；生产环境不应在配置文件中保存密钥。
+
+服务从进程工作目录查找 `config/{ROF_ENV}.toml`。分发二进制时请一并安装 `config/` 目录，或用 `ROF_CONFIG_FILE` 指向绝对路径的配置文件。
 
 ### 验证服务
 
@@ -96,7 +105,7 @@ curl -s -H 'X-API-Key: replace-with-a-random-secret' \
 
 ## API 概览
 
-业务接口统一使用 `/api/v1` 前缀。配置 `ROF_API_KEYS` 后，除健康检查和 OpenAPI 契约外，其余接口都需要鉴权。鉴权支持 `X-API-Key: <key>` 或 `Authorization: Bearer <key>` 两种形式。
+业务接口统一使用 `/api/v1` 前缀。配置了 API Key（`[auth].api_keys` 或环境变量 `ROF_API_KEYS`）后，除健康检查和 OpenAPI 契约外，其余接口都需要鉴权。鉴权支持 `X-API-Key: <key>` 或 `Authorization: Bearer <key>` 两种形式。
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -248,11 +257,40 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 
 ## 配置
 
-所有配置在启动时从环境变量读取，修改后需要重启进程。
+服务支持多环境配置文件。`ROF_ENV` 未设置或为空时默认使用 `dev`，启动时读取 `config/{ROF_ENV}.toml`；也可以用 `ROF_CONFIG_FILE` 指定其他文件路径。加载优先级为：
+
+```text
+内置默认值 < config/{ROF_ENV}.toml < 环境变量
+```
+
+配置文件缺失、TOML 格式错误或包含未知字段时，服务会在启动阶段直接失败。配置修改后需要重启进程。
+
+| 环境 | 配置文件 | 主要差异 |
+|---|---|---|
+| `dev` | [`config/dev.toml`](config/dev.toml) | 默认环境；监听 `127.0.0.1`，临时目录 `./data/tmp`，文本日志 |
+| `prod` | [`config/prod.toml`](config/prod.toml) | 监听 `0.0.0.0`，临时目录 `/var/lib/rof-convert/tmp`，JSON 日志 |
+| 自定义 | `config/{env}.toml` | 如 `staging`，复制模板并设置 `ROF_ENV=staging` |
+
+`development`、`production` 会分别归一化为 `dev`、`prod`。环境名只允许字母、数字、`-` 和 `_`。
+
+配置文件字段：
+
+| 配置段 | 字段 | 对应环境变量 |
+|---|---|---|
+| `[server]` | `host`、`port`、`max_upload_mb`、`request_timeout_secs` | `ROF_HOST`、`ROF_PORT`、`ROF_MAX_UPLOAD_MB`、`ROF_REQUEST_TIMEOUT_SECS` |
+| `[conversion]` | `soffice_bin`、`timeout_secs`、`max_concurrency`、`max_active_jobs`、`job_ttl_secs` | `ROF_SOFFICE_BIN`、`ROF_CONVERSION_TIMEOUT_SECS`、`ROF_MAX_CONCURRENCY`、`ROF_MAX_ACTIVE_JOBS`、`ROF_JOB_TTL_SECS` |
+| `[storage]` | `temp_dir` | `ROF_TEMP_DIR` |
+| `[auth]` | `api_keys`（字符串数组） | `ROF_API_KEYS`（逗号分隔） |
+| `[cors]` | `allowed_origins`（字符串数组） | `ROF_CORS_ORIGINS`（逗号分隔） |
+| `[logging]` | `format`、`filter` | `ROF_LOG_FORMAT`、`RUST_LOG` |
+
+环境变量表：
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `ROF_HOST` | `0.0.0.0` | 监听地址，仅接受 IP 地址 |
+| `ROF_ENV` | `dev` | 环境名，决定默认配置文件；未设置或为空时使用 `dev` |
+| `ROF_CONFIG_FILE` | `config/{ROF_ENV}.toml` | 显式指定配置文件；相对路径相对于进程工作目录 |
+| `ROF_HOST` | `127.0.0.1` | 监听地址，仅接受 IP 地址；生产配置为 `0.0.0.0` |
 | `ROF_PORT` | `8080` | 监听端口 |
 | `ROF_MAX_UPLOAD_MB` | `50` | 单文件上传上限，范围 1-1024 MB |
 | `ROF_CONVERSION_TIMEOUT_SECS` | `120` | 单次 soffice 转换超时，范围 5-3600 秒 |
@@ -260,18 +298,21 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 | `ROF_MAX_CONCURRENCY` | `2` | 同时运行的 soffice 进程数，范围 1-64 |
 | `ROF_MAX_ACTIVE_JOBS` | `100` | 队列中及运行中的任务总数上限，需不小于并发数，最大 10000 |
 | `ROF_JOB_TTL_SECS` | `3600` | 终态任务记录与结果保留时间，范围 60-604800 秒 |
-| `ROF_TEMP_DIR` | 系统临时目录下的 `rof-convert` | 任务工作目录，启动时创建并设置 `0700` 权限 |
+| `ROF_TEMP_DIR` | `./data/tmp` | 任务工作目录；生产配置为 `/var/lib/rof-convert/tmp`；启动时创建并设置 `0700` 权限 |
 | `ROF_SOFFICE_BIN` | `soffice` | soffice 可执行文件，可传 PATH 名称或绝对路径 |
-| `ROF_API_KEYS` | 空 | 逗号分隔的 API Key，最多 32 个；为空时关闭鉴权 |
-| `ROF_CORS_ORIGINS` | 空 | 逗号分隔的允许来源；`*` 不能与其他来源同时使用；为空时关闭 CORS |
-| `ROF_LOG_FORMAT` | `text` | 日志格式：`text` 或 `json` |
-| `RUST_LOG` | `rof_convert=info` | 日志级别过滤 |
+| `ROF_API_KEYS` | 空 | 逗号分隔的 API Key，最多 32 个；为空时不覆盖配置文件，文件也为空则关闭鉴权 |
+| `ROF_CORS_ORIGINS` | 空 | 逗号分隔的允许来源；`*` 不能与其他来源同时使用；为空时不覆盖配置文件，文件也为空则关闭 CORS |
+| `ROF_LOG_FORMAT` | `text` | 日志格式：`text` 或 `json`；生产配置为 `json` |
+| `RUST_LOG` | `rof_convert=info` | 日志级别过滤，覆盖配置文件中的 `logging.filter` |
 
 补充说明：
 
+- 配置文件中未出现的字段使用内置默认值；内置默认值与 `dev` 配置一致。
+- 配置文件按字面值解析，不执行环境变量或 `~` 展开；`temp_dir` 使用相对路径时相对于进程工作目录。
+- 配置文件中 `auth.api_keys` 和 `cors.allowed_origins` 使用 TOML 数组，环境变量使用逗号分隔。
 - `ROF_MAX_ACTIVE_JOBS` 是排队任务与运行任务的合计上限，超限返回 `503` 与 `Retry-After`。
 - `ROF_REQUEST_TIMEOUT_SECS` 约束 HTTP 请求处理，不等待转换完成；转换由 `ROF_CONVERSION_TIMEOUT_SECS` 独立控制。
-- API Key 应使用足够长的随机值，生产环境建议放在密钥管理系统或环境变量文件中，不要写入仓库。
+- API Key 应使用足够长的随机值，生产环境建议放在密钥管理系统或环境变量文件中，不要写入仓库或 `config/prod.toml`。
 - CORS 默认关闭；浏览器直连场景再按需配置。
 
 ## 错误码
@@ -311,7 +352,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 
 ## 任务与数据生命周期
 
-- 上传文件写入 `{ROF_TEMP_DIR}/{jobId}/input.{ext}`，工作目录权限为 `0700`。
+- 上传文件写入 `{temp_dir}/{jobId}/input.{ext}`，工作目录权限为 `0700`。
 - 每个任务使用独立 `profile/` 作为 LibreOffice `UserInstallation`，避免实例锁冲突。
 - 转换成功后仅保留 `out/input.{target}` 供下载；输入文件和 `profile/` 立即清理。
 - 转换失败或取消时清理整个任务目录。
@@ -325,7 +366,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 - 每个请求输出访问日志，包含 `request_id`、方法、路径、状态码和耗时。
 - 转换任务日志包含 `job_id`、来源请求 `request_id`、源/目标格式和耗时。
 - `ROF_LOG_FORMAT=json` 可输出结构化日志，便于接入日志平台。
-- `/healthz` 用于存活探测；`/readyz` 用于就绪探测，检查 `soffice` 可执行文件与临时目录写入能力。
+- `/healthz` 用于存活探测，并返回当前环境名；`/readyz` 用于就绪探测，检查 `soffice` 可执行文件与临时目录写入能力。
 - 当前版本不内置 Prometheus 指标端点，可基于访问日志、任务日志和网关指标建立监控。
 
 ## 开发
@@ -341,7 +382,7 @@ cargo test
 ```text
 src/
 ├── main.rs        # 启动、日志、临时目录、优雅停机
-├── config.rs      # 环境变量配置
+├── config.rs      # 多环境配置文件、环境变量覆盖与校验
 ├── routes.rs      # 路由与中间件装配
 ├── middleware.rs  # 请求 ID、鉴权、超时、panic 兜底
 ├── api.rs         # HTTP 处理器、上传、轮询、下载、健康检查
@@ -352,6 +393,10 @@ src/
 ├── error.rs       # 错误码与 HTTP 映射
 ├── response.rs    # 统一响应结构
 └── state.rs       # 共享状态
+
+config/
+├── dev.toml       # 默认开发环境配置
+└── prod.toml      # 生产环境配置
 
 docs/
 ├── openapi.json   # OpenAPI 3.0 契约
@@ -374,7 +419,8 @@ docs/
 
 | 现象 | 排查方向 |
 |---|---|
-| `/readyz` 返回 503 | 确认 `soffice` 在 PATH 中或 `ROF_SOFFICE_BIN` 正确；确认 `ROF_TEMP_DIR` 对运行用户可写 |
+| 启动失败并提示 `configuration error` | 检查 `ROF_ENV`、`ROF_CONFIG_FILE` 和工作目录下的 `config/{ROF_ENV}.toml`；TOML 未知字段或参数越界会被拒绝 |
+| `/readyz` 返回 503 | 确认 `soffice` 在 PATH 中或 `ROF_SOFFICE_BIN` 正确；确认配置中的 `storage.temp_dir` / `ROF_TEMP_DIR` 对运行用户可写 |
 | 创建任务返回 413 | 检查 `ROF_MAX_UPLOAD_MB`，以及反向代理/网关的请求体上限 |
 | 转换失败 | 查看服务日志中的 soffice 退出码与 stderr；检查文档是否损坏、字体是否缺失 |
 | 转换超时 | 提高 `ROF_CONVERSION_TIMEOUT_SECS`，检查 CPU/内存压力，降低并发 |

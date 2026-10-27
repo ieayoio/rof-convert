@@ -25,7 +25,7 @@ use crate::{
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let config = match Config::from_env() {
+    let config = match Config::load() {
         Ok(config) => config,
         Err(error) => {
             eprintln!("configuration error: {error}");
@@ -65,6 +65,8 @@ async fn run(mut config: Config) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(
         address = %address,
         version = env!("CARGO_PKG_VERSION"),
+        environment = %state.config.environment,
+        config_file = %state.config.config_file.display(),
         auth_enabled = state.config.auth_enabled(),
         max_concurrency = state.config.max_concurrency,
         max_upload_mb = state.config.max_upload_mb(),
@@ -82,8 +84,13 @@ async fn run(mut config: Config) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn init_tracing(config: &Config) {
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("rof_convert=info"));
+    let filter = EnvFilter::try_new(&config.log_filter).unwrap_or_else(|error| {
+        eprintln!(
+            "invalid log filter `{}`: {error}; falling back to `rof_convert=info`",
+            config.log_filter
+        );
+        EnvFilter::new("rof_convert=info")
+    });
     match config.log_format {
         LogFormat::Json => tracing_subscriber::fmt()
             .with_env_filter(filter)

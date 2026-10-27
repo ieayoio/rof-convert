@@ -1,0 +1,32 @@
+# rof-convert 开发环境配置
+# ROF_ENV 未设置或为空时默认使用本文件。
+# 环境变量会覆盖这里的值，例如 ROF_PORT、ROF_API_KEYS。
+
+[server]
+host = "127.0.0.1"
+port = 8080
+max_upload_mb = 50
+request_timeout_secs = 300
+
+[conversion]
+# 可改为绝对路径，例如 "/usr/bin/soffice"
+soffice_bin = "soffice"
+timeout_secs = 120
+max_concurrency = 2
+max_active_jobs = 100
+job_ttl_secs = 3600
+
+[storage]
+# 相对路径相对于服务进程的工作目录
+temp_dir = "./data/tmp"
+
+[auth]
+# 留空表示关闭 API Key 鉴权；开发环境可用 ROF_API_KEYS 临时启用
+api_keys = []
+
+[cors]
+allowed_origins = []
+
+[logging]
+format = "text"
+filter = "rof_convert=info"

@@ -1,0 +1,33 @@
+# rof-convert 生产环境配置
+# 使用方式：ROF_ENV=prod；敏感信息通过环境变量注入，不要写入本文件。
+# 环境变量会覆盖这里的值，例如 ROF_API_KEYS、ROF_TEMP_DIR。
+
+[server]
+host = "0.0.0.0"
+port = 8080
+max_upload_mb = 50
+request_timeout_secs = 300
+
+[conversion]
+# 生产环境建议使用绝对路径，或通过 ROF_SOFFICE_BIN 覆盖
+soffice_bin = "soffice"
+timeout_secs = 120
+max_concurrency = 2
+max_active_jobs = 100
+job_ttl_secs = 3600
+
+[storage]
+# 部署时确保该目录对运行用户可写，权限建议 0700
+temp_dir = "/var/lib/rof-convert/tmp"
+
+[auth]
+# 生产环境应通过 ROF_API_KEYS 注入密钥；留空表示关闭鉴权（不推荐）
+api_keys = []
+
+[cors]
+# 例如 ["https://console.example.com"]，或单独使用 ["*"]
+allowed_origins = []
+
+[logging]
+format = "json"
+filter = "rof_convert=info"

@@ -49,7 +49,7 @@
 | 文件 | 职责 |
 |---|---|
 | `src/main.rs` | 读取配置、初始化日志、准备临时目录、清理遗留工作区、启动 HTTP 服务、优雅停机 |
-| `src/config.rs` | 环境变量解析、范围校验、默认值 |
+| `src/config.rs` | 多环境配置文件加载、环境变量覆盖、范围校验与默认值 |
 | `src/routes.rs` | 公开接口与业务接口分层、路由注册、请求体上限、CORS |
 | `src/middleware.rs` | `X-Request-Id`、访问日志、panic 兜底、API Key 鉴权、请求超时 |
 | `src/response.rs` | 统一成功响应、响应上下文、无缓存与 `nosniff` 响应头 |
@@ -60,6 +60,21 @@
 | `src/worker.rs` | 任务排队、并发信号量、调用引擎、成功/失败落库、工作区清理、后台清理任务 |
 | `src/engine.rs` | 组装 soffice 参数、独立 profile、超时与取消、输出文件发现、SHA-256 计算 |
 | `src/state.rs` | 共享 `Config`、`JobStore`、并发信号量和启动时间 |
+
+## 配置加载
+
+服务支持多环境配置，默认环境为 `dev`：
+
+- `ROF_ENV` 未设置或为空时使用 `dev`；`development`/`production` 会归一化为 `dev`/`prod`。
+- 默认配置文件为 `config/{ROF_ENV}.toml`；`ROF_CONFIG_FILE` 可以直接指定其他路径。
+- 配置优先级为：内置默认值 < 配置文件 < 环境变量。
+- 配置文件缺失、TOML 非法或包含未知字段时，启动阶段直接失败。
+- `config/dev.toml` 使用 `127.0.0.1`、`./data/tmp` 和文本日志；`config/prod.toml` 使用 `0.0.0.0`、`/var/lib/rof-convert/tmp` 和 JSON 日志。
+- `[auth]`、`[cors]` 和 `[logging]` 等敏感或部署相关值可通过环境变量覆盖；密钥不应写入生产配置文件。
+- 内置默认值与 `dev` 配置一致。配置在启动时加载，修改后需要重启进程。
+- 启动日志记录 `environment` 与 `config_file`；`/healthz` 返回当前环境名，便于确认实际生效环境。
+
+配置文件字段与 `Config` 结构一一对应，未知字段会被拒绝，避免拼写错误被静默忽略。环境变量 `RUST_LOG` 优先于文件中的 `logging.filter`。
 
 ## 请求处理流程
 
@@ -88,7 +103,7 @@ CORS
 3. 确认 `Content-Type` 为 `multipart/form-data`。
 4. 读取 `file` 与 `targetFormat`；源格式由文件名扩展名决定。
 5. 目标格式已知时，在写入完整文件前校验源/目标组合。
-6. 创建 `{ROF_TEMP_DIR}/{jobId}`，权限 `0700`，流式写入输入文件并累计大小。
+6. 创建 `{temp_dir}/{jobId}`，权限 `0700`，流式写入输入文件并累计大小。
 7. 校验目标格式、获取 LibreOffice 导出过滤器。
 8. 创建任务、写入内存任务仓储、返回 `202` 与 `Location`。
 9. 异步 worker 开始排队执行。
@@ -157,7 +172,7 @@ soffice 的 stdout 被丢弃，stderr 仅在日志中保留截断片段；不会
 ## 文件布局与清理
 
 ```text
-{ROF_TEMP_DIR}/
+{temp_dir}/
 └── {jobId}/
     ├── input.docx
     ├── profile/

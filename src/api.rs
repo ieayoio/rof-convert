@@ -56,6 +56,7 @@ pub async fn healthz(
     ApiCtx::new(request_id).ok(json!({
         "status": "UP",
         "version": env!("CARGO_PKG_VERSION"),
+        "environment": state.config.environment,
         "uptimeSeconds": (Utc::now() - state.started_at).num_seconds().max(0),
     }))
 }

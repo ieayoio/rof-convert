@@ -55,6 +55,7 @@
                           "properties": {
                             "status": { "type": "string", "example": "UP" },
                             "version": { "type": "string", "example": "0.1.0" },
+                            "environment": { "type": "string", "example": "dev" },
                             "uptimeSeconds": { "type": "integer", "format": "int64", "example": 3600 }
                           }
                         }
