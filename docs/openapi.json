@@ -1,0 +1,806 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "rof-convert API",
+    "version": "0.1.0",
+    "description": "基于 LibreOffice 的无头文档转换服务。上传文件后异步生成转换任务，通过轮询任务状态获取结果并下载。配置 ROF_API_KEYS 后，/api/v1 业务接口需通过 X-API-Key 或 Authorization: Bearer 鉴权。"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "当前服务实例"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Conversions",
+      "description": "文档转换任务"
+    },
+    {
+      "name": "Metadata",
+      "description": "格式与接口元数据"
+    },
+    {
+      "name": "Health",
+      "description": "健康检查"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "存活探针",
+        "operationId": "getLiveness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "进程存活",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "status": { "type": "string", "example": "UP" },
+                            "version": { "type": "string", "example": "0.1.0" },
+                            "uptimeSeconds": { "type": "integer", "format": "int64", "example": 3600 }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "就绪探针",
+        "description": "检查 LibreOffice 可执行文件与临时目录是否可用。",
+        "operationId": "getReadiness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "服务就绪",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖未就绪",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "tags": ["Metadata"],
+        "summary": "获取 OpenAPI 契约",
+        "operationId": "getOpenApiSpec",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 文档",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/formats": {
+      "get": {
+        "tags": ["Metadata"],
+        "summary": "查询支持的格式矩阵",
+        "operationId": "listFormats",
+        "responses": {
+          "200": {
+            "description": "格式矩阵与运行限制",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/SourceFormat"
+                              }
+                            },
+                            "limits": {
+                              "$ref": "#/components/schemas/Limits"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/conversions": {
+      "post": {
+        "tags": ["Conversions"],
+        "summary": "创建转换任务",
+        "description": "上传源文件并创建异步转换任务。任务立即返回 202；客户端应轮询 statusUrl 或使用 Location 响应头。",
+        "operationId": "createConversion",
+        "parameters": [
+          {
+            "name": "targetFormat",
+            "in": "query",
+            "required": false,
+            "description": "目标格式扩展名（不含点）。也可通过 multipart 文本字段 `targetFormat` 传入；两者同时存在时必须一致。",
+            "schema": {
+              "type": "string",
+              "example": "pdf"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "源文件，扩展名必须在支持的源格式列表中且不超过 maxUploadBytes。"
+                  },
+                  "targetFormat": {
+                    "type": "string",
+                    "description": "目标格式扩展名（可替代 query 参数）。",
+                    "example": "pdf"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "任务已受理",
+            "headers": {
+              "Location": {
+                "description": "任务状态地址",
+                "schema": {
+                  "type": "string",
+                  "example": "/api/v1/conversions/6f9619ff-8b86-d011-b42d-00c04fc964ff"
+                }
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConversionJob"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "description": "文件超过大小限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "请求或文件格式不受支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "不支持的格式转换组合",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "服务容量已满",
+            "headers": {
+              "Retry-After": {
+                "description": "建议重试等待秒数",
+                "schema": {
+                  "type": "integer",
+                  "example": 5
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversions/{jobId}": {
+      "parameters": [
+        {
+          "name": "jobId",
+          "in": "path",
+          "required": true,
+          "description": "任务 UUID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": ["Conversions"],
+        "summary": "查询任务状态",
+        "operationId": "getConversion",
+        "responses": {
+          "200": {
+            "description": "任务详情",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConversionJob"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Conversions"],
+        "summary": "取消并删除任务",
+        "description": "取消排队或运行中的任务，并尽力删除工作目录；完成后任务记录不可再查询。",
+        "operationId": "deleteConversion",
+        "responses": {
+          "200": {
+            "description": "任务已删除",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "jobId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "deleted": {
+                              "type": "boolean",
+                              "example": true
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/conversions/{jobId}/download": {
+      "parameters": [
+        {
+          "name": "jobId",
+          "in": "path",
+          "required": true,
+          "description": "任务 UUID",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": ["Conversions"],
+        "summary": "下载转换结果",
+        "operationId": "downloadConversion",
+        "responses": {
+          "200": {
+            "description": "转换后的文件流",
+            "headers": {
+              "Content-Disposition": {
+                "description": "附件文件名，同时提供 RFC 5987 的 filename* 形式",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Checksum-SHA256": {
+                "description": "结果文件 SHA-256 摘要",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "任务尚未完成或已失败",
+            "headers": {
+              "Retry-After": {
+                "description": "任务未完成时的建议轮询间隔秒数",
+                "schema": {
+                  "type": "integer",
+                  "example": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "配置 ROF_API_KEYS 后启用。"
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "与 X-API-Key 等价的 Bearer Token 形式。"
+      }
+    },
+    "headers": {
+      "XRequestId": {
+        "description": "请求追踪 ID，客户端可透传；缺失时由服务生成。",
+        "schema": {
+          "type": "string",
+          "example": "9f8e7d6c-1234-4a3b-8c2d-0123456789ab"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "请求参数不合法",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "缺少或提供了无效的 API Key",
+        "headers": {
+          "WWW-Authenticate": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "任务或资源不存在",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ApiEnvelope": {
+        "type": "object",
+        "required": ["success", "code", "message", "requestId", "timestamp"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "code": {
+            "type": "string",
+            "example": "OK"
+          },
+          "message": {
+            "type": "string",
+            "example": "success"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {
+            "nullable": true
+          },
+          "details": {
+            "nullable": true
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["success", "code", "message", "requestId", "timestamp"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "INVALID_ARGUMENT",
+              "UNAUTHORIZED",
+              "NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "PAYLOAD_TOO_LARGE",
+              "UNSUPPORTED_MEDIA_TYPE",
+              "UNSUPPORTED_CONVERSION",
+              "CONFLICT",
+              "REQUEST_TIMEOUT",
+              "CONVERSION_FAILED",
+              "CONVERSION_TIMEOUT",
+              "SERVICE_UNAVAILABLE",
+              "INTERNAL_ERROR"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "nullable": true
+          }
+        }
+      },
+      "SourceFormat": {
+        "type": "object",
+        "required": ["format", "category", "targets"],
+        "properties": {
+          "format": {
+            "type": "string",
+            "example": "docx"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["DOCUMENT", "SPREADSHEET", "PRESENTATION"]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["pdf", "doc", "odt", "rtf", "txt", "html"]
+          }
+        }
+      },
+      "Limits": {
+        "type": "object",
+        "properties": {
+          "maxUploadBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxActiveJobs": {
+            "type": "integer"
+          },
+          "maxConcurrency": {
+            "type": "integer"
+          },
+          "conversionTimeoutSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "retentionSeconds": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ConversionJob": {
+        "type": "object",
+        "required": [
+          "jobId",
+          "status",
+          "source",
+          "target",
+          "createdAt",
+          "statusUrl"
+        ],
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
+          },
+          "source": {
+            "type": "object",
+            "required": ["fileName", "format", "sizeBytes"],
+            "properties": {
+              "fileName": {
+                "type": "string"
+              },
+              "format": {
+                "type": "string"
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          },
+          "target": {
+            "type": "object",
+            "required": ["format"],
+            "properties": {
+              "format": {
+                "type": "string"
+              }
+            }
+          },
+          "result": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "fileName": {
+                "type": "string"
+              },
+              "contentType": {
+                "type": "string"
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "sha256": {
+                "type": "string"
+              }
+            }
+          },
+          "error": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time"
+          },
+          "statusUrl": {
+            "type": "string",
+            "example": "/api/v1/conversions/6f9619ff-8b86-d011-b42d-00c04fc964ff"
+          },
+          "downloadUrl": {
+            "nullable": true,
+            "type": "string",
+            "example": "/api/v1/conversions/6f9619ff-8b86-d011-b42d-00c04fc964ff/download"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {},
+    {
+      "ApiKeyAuth": []
+    },
+    {
+      "BearerAuth": []
+    }
+  ]
+}

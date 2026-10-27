@@ -1,0 +1,386 @@
+# rof-convert
+
+基于 Rust、axum 与 LibreOffice 的无头文档转换服务。服务通过异步任务模式接收上传文件，调用 `soffice` 完成文档转换，并提供任务查询、结果下载、取消删除、健康检查和 OpenAPI 契约。
+
+接口按企业级规范设计：版本化路径、统一响应结构、请求追踪、稳定错误码、可选 API Key 鉴权、上传校验、并发控制、超时取消、结果保留与自动清理。
+
+## 文档导航
+
+- [架构设计](docs/architecture.md)：模块职责、任务生命周期、并发与清理机制
+- [部署与运维](docs/deployment.md)：systemd、反向代理、容器、容量规划与故障排查
+- [OpenAPI 契约](docs/openapi.json)：完整接口定义，也可在运行时访问 `/api/v1/openapi.json`
+- 当前版本：`0.1.0`
+
+## 功能特性
+
+- 支持文档、表格、演示文稿的常见格式互转
+- 异步任务：创建任务立即返回 `202`，通过任务状态轮询结果
+- 结果下载附带 `SHA-256` 校验值和 RFC 5987 文件名
+- 统一响应结构：`success/code/message/requestId/timestamp/data/details`
+- `X-Request-Id` 透传或自动生成，日志可按请求追踪
+- 可选 API Key 鉴权：`X-API-Key` 或 `Authorization: Bearer`
+- 文件扩展名白名单、上传大小限制、文件名清洗、路径穿越防护
+- 每个任务使用独立 LibreOffice 用户配置目录，支持并发转换
+- 信号量控制并发、任务超时强制结束、运行中任务可取消
+- 任务结果按 TTL 自动清理，启动时清理异常退出遗留目录
+- 优雅停机、结构化日志（text/json）、可配置 CORS
+- 存活/就绪探针，就绪检查覆盖 `soffice` 与临时目录
+- 完整 OpenAPI 3.0 契约
+
+## 支持格式
+
+源格式由上传文件扩展名决定，大小写不敏感。目标格式为扩展名（不含点），不能与源格式相同。
+
+| 类别 | 源格式 | 目标格式 |
+|---|---|---|
+| 文档 | `doc`、`docx`、`odt`、`rtf`、`txt`、`html` | `pdf`、`docx`、`doc`、`odt`、`rtf`、`txt`、`html` |
+| 表格 | `xls`、`xlsx`、`ods`、`csv` | `pdf`、`xlsx`、`xls`、`ods`、`csv`、`html` |
+| 演示 | `ppt`、`pptx`、`odp` | `pdf`、`pptx`、`ppt`、`odp`、`png` |
+
+说明：
+
+- 目标格式列表中若包含源格式，实际请求会被拒绝。
+- 当前不支持 PDF 作为源格式，也不支持宏文档（`docm/xlsm/pptm`）。
+- 演示文稿转 `png` 仅导出首页。
+- 文件类型以扩展名白名单判断，不进行二进制魔数嗅探；处理不可信文件时应配合容器沙箱运行。
+
+## 快速开始
+
+### 环境要求
+
+- Linux（推荐）或支持 LibreOffice 无头模式的环境
+- Rust `1.85+`（项目使用 edition 2024，当前开发环境为 1.99）
+- LibreOffice，确保 `soffice` 可执行
+- 可写的临时目录
+- 如转换中文文档，建议安装 CJK 字体
+
+以 Debian/Ubuntu 为例：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  libreoffice-writer libreoffice-calc libreoffice-impress \
+  fonts-noto-cjk
+```
+
+确认环境：
+
+```bash
+rustc --version
+soffice --version
+```
+
+### 构建与启动
+
+```bash
+cargo build --release
+
+mkdir -p ./data/tmp
+ROF_TEMP_DIR="$PWD/data/tmp" \
+ROF_API_KEYS='replace-with-a-random-secret' \
+./target/release/rof-convert
+```
+
+默认监听 `0.0.0.0:8080`。`ROF_API_KEYS` 为空时关闭鉴权，仅建议在受控的开发环境使用。
+
+### 验证服务
+
+```bash
+curl -s http://127.0.0.1:8080/healthz
+curl -s http://127.0.0.1:8080/readyz
+curl -s -H 'X-API-Key: replace-with-a-random-secret' \
+  http://127.0.0.1:8080/api/v1/formats
+```
+
+`readyz` 返回 `503` 时，响应 `details` 会给出 `soffice` 与临时目录的检查结果。
+
+## API 概览
+
+业务接口统一使用 `/api/v1` 前缀。配置 `ROF_API_KEYS` 后，除健康检查和 OpenAPI 契约外，其余接口都需要鉴权。鉴权支持 `X-API-Key: <key>` 或 `Authorization: Bearer <key>` 两种形式。
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| `POST` | `/api/v1/conversions` | 创建转换任务 | 业务鉴权 |
+| `GET` | `/api/v1/conversions/{jobId}` | 查询任务状态 | 业务鉴权 |
+| `GET` | `/api/v1/conversions/{jobId}/download` | 下载转换结果 | 业务鉴权 |
+| `DELETE` | `/api/v1/conversions/{jobId}` | 取消任务并清理数据 | 业务鉴权 |
+| `GET` | `/api/v1/formats` | 查询格式矩阵与运行限制 | 业务鉴权 |
+| `GET` | `/healthz` | 存活探针 | 公开 |
+| `GET` | `/readyz` | 就绪探针 | 公开 |
+| `GET` | `/api/v1/openapi.json` | 获取 OpenAPI 契约 | 公开 |
+
+### 统一响应结构
+
+成功与失败均返回相同外层结构：
+
+```json
+{
+  "success": true,
+  "code": "OK",
+  "message": "success",
+  "requestId": "9f8e7d6c-1234-4a3b-8c2d-0123456789ab",
+  "timestamp": "2026-10-27T08:00:00Z",
+  "data": {},
+  "details": null
+}
+```
+
+- `requestId`：请求追踪 ID，可用 `X-Request-Id` 传入；缺失或非法时由服务生成。
+- `timestamp`：UTC RFC 3339 时间。
+- `details`：错误时可能包含字段级补充信息，成功时省略。
+- 响应头 `X-Request-Id` 与响应体中的 `requestId` 一致。
+
+### 创建转换任务
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:8080/api/v1/conversions' \
+  -H 'X-API-Key: replace-with-a-random-secret' \
+  -H 'X-Request-Id: demo-001' \
+  -F 'file=@./report.docx' \
+  -F 'targetFormat=pdf'
+```
+
+`targetFormat` 可以放在 multipart 表单字段中，也可以作为查询参数：
+
+```text
+POST /api/v1/conversions?targetFormat=pdf
+```
+
+两种方式同时提供时必须一致。任务创建成功返回 `202 Accepted`，并带有 `Location` 响应头：
+
+```json
+{
+  "success": true,
+  "code": "OK",
+  "message": "success",
+  "requestId": "demo-001",
+  "timestamp": "2026-10-27T08:00:00Z",
+  "data": {
+    "jobId": "b8b04f99-9135-493d-b5e4-1d80b49681d6",
+    "status": "QUEUED",
+    "source": {
+      "fileName": "report.docx",
+      "format": "docx",
+      "sizeBytes": 5098
+    },
+    "target": {
+      "format": "pdf"
+    },
+    "result": null,
+    "error": null,
+    "createdAt": "2026-10-27T08:00:00Z",
+    "startedAt": null,
+    "completedAt": null,
+    "expiresAt": null,
+    "statusUrl": "/api/v1/conversions/b8b04f99-9135-493d-b5e4-1d80b49681d6",
+    "downloadUrl": null
+  }
+}
+```
+
+### 轮询任务状态
+
+```bash
+JOB_ID=b8b04f99-9135-493d-b5e4-1d80b49681d6
+curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
+  "http://127.0.0.1:8080/api/v1/conversions/$JOB_ID"
+```
+
+状态流转：
+
+```text
+QUEUED -> RUNNING -> SUCCEEDED
+                  \-> FAILED
+```
+
+成功时 `result` 包含：
+
+```json
+{
+  "result": {
+    "fileName": "report.pdf",
+    "contentType": "application/pdf",
+    "sizeBytes": 17437,
+    "sha256": "1921750cb336196c3db1a1203417364e822c691ae35981026d8b855505c5cf55"
+  },
+  "downloadUrl": "/api/v1/conversions/b8b04f99-9135-493d-b5e4-1d80b49681d6/download"
+}
+```
+
+失败时 `error` 包含 `code` 与 `message`。任务完成后才会出现 `expiresAt`，表示结果保留截止时间。
+
+### 下载结果
+
+```bash
+curl -fL -H 'X-API-Key: replace-with-a-random-secret' \
+  -o report.pdf \
+  "http://127.0.0.1:8080/api/v1/conversions/$JOB_ID/download"
+```
+
+下载响应包含：
+
+- `Content-Disposition`：附件名，同时提供 RFC 5987 的 `filename*` 形式
+- `X-Checksum-SHA256`：结果文件 SHA-256 摘要
+- `Content-Type`、`Content-Length`
+- `Cache-Control: private, no-store`
+- `X-Content-Type-Options: nosniff`
+
+任务尚未完成时返回 `409`，并在可能的情况下返回 `Retry-After`；任务失败时返回 `409` 并附带任务错误信息。
+
+### 取消并删除任务
+
+```bash
+curl -sS -X DELETE \
+  -H 'X-API-Key: replace-with-a-random-secret' \
+  "http://127.0.0.1:8080/api/v1/conversions/$JOB_ID"
+```
+
+删除会取消排队或运行中的任务、移除任务记录并尽力清理工作目录。删除后再次查询或下载返回 `404`。
+
+### 格式矩阵
+
+```bash
+curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
+  http://127.0.0.1:8080/api/v1/formats
+```
+
+返回各源格式、分类、可用目标格式，以及当前实例的上传大小、并发数、转换超时和结果保留时间。
+
+## 配置
+
+所有配置在启动时从环境变量读取，修改后需要重启进程。
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `ROF_HOST` | `0.0.0.0` | 监听地址，仅接受 IP 地址 |
+| `ROF_PORT` | `8080` | 监听端口 |
+| `ROF_MAX_UPLOAD_MB` | `50` | 单文件上传上限，范围 1-1024 MB |
+| `ROF_CONVERSION_TIMEOUT_SECS` | `120` | 单次 soffice 转换超时，范围 5-3600 秒 |
+| `ROF_REQUEST_TIMEOUT_SECS` | `300` | HTTP 请求超时（包含上传），范围 10-3600 秒 |
+| `ROF_MAX_CONCURRENCY` | `2` | 同时运行的 soffice 进程数，范围 1-64 |
+| `ROF_MAX_ACTIVE_JOBS` | `100` | 队列中及运行中的任务总数上限，需不小于并发数，最大 10000 |
+| `ROF_JOB_TTL_SECS` | `3600` | 终态任务记录与结果保留时间，范围 60-604800 秒 |
+| `ROF_TEMP_DIR` | 系统临时目录下的 `rof-convert` | 任务工作目录，启动时创建并设置 `0700` 权限 |
+| `ROF_SOFFICE_BIN` | `soffice` | soffice 可执行文件，可传 PATH 名称或绝对路径 |
+| `ROF_API_KEYS` | 空 | 逗号分隔的 API Key，最多 32 个；为空时关闭鉴权 |
+| `ROF_CORS_ORIGINS` | 空 | 逗号分隔的允许来源；`*` 不能与其他来源同时使用；为空时关闭 CORS |
+| `ROF_LOG_FORMAT` | `text` | 日志格式：`text` 或 `json` |
+| `RUST_LOG` | `rof_convert=info` | 日志级别过滤 |
+
+补充说明：
+
+- `ROF_MAX_ACTIVE_JOBS` 是排队任务与运行任务的合计上限，超限返回 `503` 与 `Retry-After`。
+- `ROF_REQUEST_TIMEOUT_SECS` 约束 HTTP 请求处理，不等待转换完成；转换由 `ROF_CONVERSION_TIMEOUT_SECS` 独立控制。
+- API Key 应使用足够长的随机值，生产环境建议放在密钥管理系统或环境变量文件中，不要写入仓库。
+- CORS 默认关闭；浏览器直连场景再按需配置。
+
+## 错误码
+
+| 错误码 | HTTP 状态 | 说明 |
+|---|---|---|
+| `INVALID_ARGUMENT` | 400 | 参数、multipart 字段或任务 ID 非法 |
+| `UNAUTHORIZED` | 401 | 缺少或提供了无效 API Key |
+| `NOT_FOUND` | 404 | 任务不存在、已删除或已过期 |
+| `METHOD_NOT_ALLOWED` | 405 | 资源不支持该 HTTP 方法 |
+| `REQUEST_TIMEOUT` | 408 | HTTP 请求处理超时 |
+| `CONFLICT` | 409 | 任务尚未完成、已失败或状态冲突 |
+| `PAYLOAD_TOO_LARGE` | 413 | 上传文件超过大小限制 |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | Content-Type 或源文件扩展名不受支持 |
+| `UNSUPPORTED_CONVERSION` | 422 | 源格式到目标格式的组合不受支持 |
+| `CONVERSION_FAILED` | 500 | 转换失败；通常出现在任务 `error.code` 中 |
+| `CONVERSION_TIMEOUT` | 504 | 转换超时；通常出现在任务 `error.code` 中 |
+| `SERVICE_UNAVAILABLE` | 503 | 容量已满或服务未就绪 |
+| `INTERNAL_ERROR` | 500 | 未预期的服务端错误 |
+
+错误响应示例：
+
+```json
+{
+  "success": false,
+  "code": "UNSUPPORTED_CONVERSION",
+  "message": "conversion from `docx` to `xlsx` is not supported",
+  "requestId": "demo-002",
+  "timestamp": "2026-10-27T08:00:00Z",
+  "details": {
+    "sourceFormat": "docx",
+    "targetFormat": "xlsx",
+    "supportedTargets": ["pdf", "doc", "odt", "rtf", "txt", "html"]
+  }
+}
+```
+
+## 任务与数据生命周期
+
+- 上传文件写入 `{ROF_TEMP_DIR}/{jobId}/input.{ext}`，工作目录权限为 `0700`。
+- 每个任务使用独立 `profile/` 作为 LibreOffice `UserInstallation`，避免实例锁冲突。
+- 转换成功后仅保留 `out/input.{target}` 供下载；输入文件和 `profile/` 立即清理。
+- 转换失败或取消时清理整个任务目录。
+- 终态任务在 `ROF_JOB_TTL_SECS` 后由后台任务清理，清理间隔约 60 秒。
+- 启动时会删除超过「保留时间 + 转换超时」的遗留 UUID 任务目录。
+- 任务记录保存在内存中。进程重启后任务记录丢失，重启前未完成的任务会被取消并清理。
+- 当前实现面向单实例部署；多副本共享任务状态需要引入外部存储，详见[部署与运维](docs/deployment.md)。
+
+## 可观测性
+
+- 每个请求输出访问日志，包含 `request_id`、方法、路径、状态码和耗时。
+- 转换任务日志包含 `job_id`、来源请求 `request_id`、源/目标格式和耗时。
+- `ROF_LOG_FORMAT=json` 可输出结构化日志，便于接入日志平台。
+- `/healthz` 用于存活探测；`/readyz` 用于就绪探测，检查 `soffice` 可执行文件与临时目录写入能力。
+- 当前版本不内置 Prometheus 指标端点，可基于访问日志、任务日志和网关指标建立监控。
+
+## 开发
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+代码结构：
+
+```text
+src/
+├── main.rs        # 启动、日志、临时目录、优雅停机
+├── config.rs      # 环境变量配置
+├── routes.rs      # 路由与中间件装配
+├── middleware.rs  # 请求 ID、鉴权、超时、panic 兜底
+├── api.rs         # HTTP 处理器、上传、轮询、下载、健康检查
+├── formats.rs     # 格式矩阵、导出过滤器、文件名处理
+├── engine.rs      # soffice 进程调用、超时、哈希
+├── jobs.rs        # 任务模型与内存任务仓储
+├── worker.rs      # 任务执行、并发控制、清理
+├── error.rs       # 错误码与 HTTP 映射
+├── response.rs    # 统一响应结构
+└── state.rs       # 共享状态
+
+docs/
+├── openapi.json   # OpenAPI 3.0 契约
+├── architecture.md
+└── deployment.md
+```
+
+修改 `docs/openapi.json` 后需要重新编译，运行时通过 `include_str!` 提供该文件。`/api/v1/openapi.json` 可直接用于生成客户端或导入 API 工具。
+
+## 已知限制
+
+- 任务状态和结果索引保存在单实例内存中，不支持多副本共享。
+- 不提供 Range 分段下载；大文件下载建议在内网直连。
+- 演示文稿转 PNG 仅导出首页。
+- 不支持 PDF 作为源格式。
+- API Key、并发数等配置不支持热加载。
+- 未实现按 API Key 或客户端的独立限流，仅通过全局并发和任务总数保护资源。
+
+## 故障排查
+
+| 现象 | 排查方向 |
+|---|---|
+| `/readyz` 返回 503 | 确认 `soffice` 在 PATH 中或 `ROF_SOFFICE_BIN` 正确；确认 `ROF_TEMP_DIR` 对运行用户可写 |
+| 创建任务返回 413 | 检查 `ROF_MAX_UPLOAD_MB`，以及反向代理/网关的请求体上限 |
+| 转换失败 | 查看服务日志中的 soffice 退出码与 stderr；检查文档是否损坏、字体是否缺失 |
+| 转换超时 | 提高 `ROF_CONVERSION_TIMEOUT_SECS`，检查 CPU/内存压力，降低并发 |
+| 返回 503 容量不足 | 降低请求量，调整 `ROF_MAX_CONCURRENCY`/`ROF_MAX_ACTIVE_JOBS`，或增加实例（需先解决状态共享） |
+| 成功结果下载 404 | 任务已删除或超过 `ROF_JOB_TTL_SECS` 保留期 |
+| 中文乱码或排版异常 | 安装 `fonts-noto-cjk` 等字体；CSV 源文件使用 UTF-8 |
+| 临时目录权限错误 | 确认目录属主为运行用户，权限为 `0700`，且不是只读挂载 |
+
+更完整的部署、容量规划和加固建议见[部署与运维](docs/deployment.md)。
