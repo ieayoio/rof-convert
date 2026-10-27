@@ -1,8 +1,11 @@
-//! HTTP 接口层：格式目录、异步转换任务、结果下载与健康检查。
+//! HTTP 接口层：格式目录、异步/同步转换、结果下载与健康检查。
 
 use std::{
     path::{Path, PathBuf},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
+    time::Instant,
 };
 
 use axum::{
@@ -16,18 +19,19 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
+use futures_util::Stream;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
-use tokio_util::io::ReaderStream;
+use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use uuid::Uuid;
 
 use crate::{
     engine,
     error::AppError,
     formats::{self, SourceFormat},
-    jobs::{Job, JobSpec, JobStatus, JobView},
+    jobs::{Job, JobResult, JobSpec, JobStatus, JobView},
     middleware::RequestId,
     response::ApiCtx,
     state::AppState,
@@ -118,13 +122,9 @@ pub async fn create_conversion(
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Response {
     let ctx = ApiCtx::new(request_id);
-    let query = match query {
-        Ok(Query(query)) => query,
-        Err(rejection) => {
-            return ctx.fail(AppError::invalid_argument(format!(
-                "invalid query parameters: {rejection}"
-            )));
-        }
+    let query = match parse_conversion_query(query) {
+        Ok(query) => query,
+        Err(error) => return ctx.fail(error),
     };
 
     match create_conversion_inner(&state, ctx.request_id(), query, &headers, multipart).await {
@@ -135,25 +135,59 @@ pub async fn create_conversion(
             }
             ctx.accepted(view, response_headers)
         }
-        Err(error) => {
-            if error.code.status().is_server_error() {
-                tracing::error!(
-                    request_id = ctx.request_id(),
-                    code = error.code.as_str(),
-                    error = %error.message,
-                    "conversion request failed"
-                );
-            } else {
-                tracing::warn!(
-                    request_id = ctx.request_id(),
-                    code = error.code.as_str(),
-                    error = %error.message,
-                    "conversion request rejected"
-                );
-            }
-            ctx.fail(error)
-        }
+        Err(error) => conversion_error_response(&ctx, error),
     }
+}
+
+/// 同步转换：在单次请求内完成转换并以附件形式流式返回结果。
+///
+/// 与异步任务共享 `max_concurrency` 信号量；排队等待与 LibreOffice 执行分别以
+/// `conversion_timeout` 为上限，整个请求另受 `request_timeout` 中间件兜底。
+/// 失败时直接返回结构化错误，不写入任务仓储。
+pub async fn create_conversion_sync(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    query: Result<Query<CreateConversionQuery>, QueryRejection>,
+    headers: HeaderMap,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> Response {
+    let ctx = ApiCtx::new(request_id);
+    let query = match parse_conversion_query(query) {
+        Ok(query) => query,
+        Err(error) => return ctx.fail(error),
+    };
+
+    match create_conversion_sync_inner(&state, ctx.request_id(), query, &headers, multipart).await {
+        Ok(response) => response,
+        Err(error) => conversion_error_response(&ctx, error),
+    }
+}
+
+fn parse_conversion_query(
+    query: Result<Query<CreateConversionQuery>, QueryRejection>,
+) -> Result<CreateConversionQuery, AppError> {
+    query.map(|Query(query)| query).map_err(|rejection| {
+        AppError::invalid_argument(format!("invalid query parameters: {rejection}"))
+    })
+}
+
+fn conversion_error_response(ctx: &ApiCtx, error: AppError) -> Response {
+    if error.code.status().is_server_error() {
+        tracing::error!(
+            request_id = ctx.request_id(),
+            code = error.code.as_str(),
+            error = %error.message,
+            "conversion request failed"
+        );
+    } else {
+        tracing::warn!(
+            request_id = ctx.request_id(),
+            code = error.code.as_str(),
+            error = %error.message,
+            "conversion request rejected"
+        );
+    }
+    ctx.fail(error)
 }
 
 async fn create_conversion_inner(
@@ -167,6 +201,44 @@ async fn create_conversion_inner(
         return Err(capacity_error());
     }
 
+    let PendingUpload {
+        mut file,
+        target_format,
+        filter,
+    } = receive_upload(state, query, headers, multipart).await?;
+
+    if state.jobs.active_count() >= state.config.max_active_jobs {
+        return Err(capacity_error());
+    }
+
+    let job = Arc::new(Job::new(JobSpec {
+        id: file.job_id,
+        request_id: request_id.to_string(),
+        source_file_name: file.file_name.clone(),
+        source_format: file.source.extension,
+        source_size_bytes: file.size_bytes,
+        target_format,
+        filter,
+        input_path: file.input_path.clone(),
+        output_dir: file.output_dir.clone(),
+        work_dir: file.work_dir.clone(),
+    }));
+    let view = job.view(state.config.job_ttl);
+
+    file.guard.disarm();
+    state.jobs.insert(job.clone());
+    worker::spawn(state.clone(), job);
+
+    Ok(view)
+}
+
+/// 解析并落盘上传内容，完成大小、MIME 与格式组合校验。
+async fn receive_upload(
+    state: &AppState,
+    query: CreateConversionQuery,
+    headers: &HeaderMap,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> Result<PendingUpload, AppError> {
     let max_body_bytes = state
         .config
         .max_upload_bytes
@@ -310,36 +382,105 @@ async fn create_conversion_inner(
         }
     }
 
-    let mut uploaded =
+    let uploaded =
         uploaded.ok_or_else(|| AppError::invalid_argument("`file` field is required"))?;
     let target =
         target_format.ok_or_else(|| AppError::invalid_argument("`targetFormat` is required"))?;
-    let source = uploaded.source;
-    let (target, filter) = resolve_conversion(source, &target)?;
+    let (target_format, filter) = resolve_conversion(uploaded.source, &target)?;
 
-    if state.jobs.active_count() >= state.config.max_active_jobs {
-        return Err(capacity_error());
-    }
-
-    let job = Arc::new(Job::new(JobSpec {
-        id: uploaded.job_id,
-        request_id: request_id.to_string(),
-        source_file_name: uploaded.file_name.clone(),
-        source_format: source.extension,
-        source_size_bytes: uploaded.size_bytes,
-        target_format: target,
+    Ok(PendingUpload {
+        file: uploaded,
+        target_format,
         filter,
-        input_path: uploaded.input_path.clone(),
-        output_dir: uploaded.output_dir.clone(),
-        work_dir: uploaded.work_dir.clone(),
-    }));
-    let view = job.view(state.config.job_ttl);
+    })
+}
 
-    uploaded.guard.disarm();
-    state.jobs.insert(job.clone());
-    worker::spawn(state.clone(), job);
+async fn create_conversion_sync_inner(
+    state: &AppState,
+    request_id: &str,
+    query: CreateConversionQuery,
+    headers: &HeaderMap,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> Result<Response, AppError> {
+    let PendingUpload {
+        mut file,
+        target_format,
+        filter,
+    } = receive_upload(state, query, headers, multipart).await?;
 
-    Ok(view)
+    // 与异步任务共享同一信号量，保证 soffice 并发上限一致；等待许可受
+    // conversion_timeout 约束，容量耗尽时快速失败而不是长时间占用连接。
+    let permit = match tokio::time::timeout(
+        state.config.conversion_timeout,
+        state.permits.clone().acquire_owned(),
+    )
+    .await
+    {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => {
+            return Err(
+                AppError::service_unavailable("conversion service is shutting down")
+                    .with_retry_after(5),
+            );
+        }
+        Err(_) => {
+            return Err(AppError::service_unavailable(
+                "no conversion slot became available in time, please retry later",
+            )
+            .with_retry_after(5));
+        }
+    };
+
+    tracing::info!(
+        request_id,
+        source = file.source.extension,
+        target = %target_format,
+        "synchronous conversion started"
+    );
+
+    let started = Instant::now();
+    let profile_dir = file.work_dir.join("profile");
+    let cancel = CancellationToken::new();
+    let outcome = engine::convert(
+        &state.config,
+        &file.input_path,
+        &file.output_dir,
+        &profile_dir,
+        filter,
+        &target_format,
+        &cancel,
+    )
+    .await;
+    // 转换结束即释放许可，响应流式回传不占用转换并发额度。
+    drop(permit);
+
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            // 保留 guard 兜底：即使清理未完成就被取消，目录也会在作用域结束时回收。
+            worker::cleanup_work_dir(&file.work_dir).await;
+            return Err(error);
+        }
+    };
+
+    tracing::info!(
+        request_id,
+        duration_ms = started.elapsed().as_millis() as u64,
+        size_bytes = outcome.size_bytes,
+        "synchronous conversion succeeded"
+    );
+
+    let result = JobResult {
+        file_name: formats::output_file_name(&file.file_name, &target_format),
+        file_path: outcome.file_path,
+        size_bytes: outcome.size_bytes,
+        sha256: outcome.sha256,
+        content_type: formats::content_type(&target_format),
+    };
+    // 工作目录的清理交给响应体，避免流式回传结束前删除结果文件。
+    let cleanup = StreamCleanup::new(file.work_dir.clone());
+    file.guard.disarm();
+    stream_result(&result, Some(cleanup)).await
 }
 
 pub async fn get_conversion(
@@ -421,16 +562,26 @@ pub async fn download_conversion(
         }
     };
 
+    match stream_result(&result, None).await {
+        Ok(response) => response,
+        Err(error) => ctx.fail(error),
+    }
+}
+
+/// 将转换结果包装为附件响应；传入的 cleanup 在响应体释放后异步清理工作目录。
+async fn stream_result(
+    result: &JobResult,
+    cleanup: Option<StreamCleanup>,
+) -> Result<Response, AppError> {
     let file = match tokio::fs::File::open(&result.file_path).await {
         Ok(file) => file,
         Err(error) => {
             tracing::error!(
-                job_id = %job.id,
                 path = %result.file_path.display(),
                 error = %error,
                 "failed to open converted document"
             );
-            return ctx.fail(AppError::internal(
+            return Err(AppError::internal(
                 "converted document is no longer available",
             ));
         }
@@ -441,7 +592,11 @@ pub async fn download_conversion(
         formats::ascii_file_name(&result.file_name),
         utf8_percent_encode(&result.file_name, FILENAME_ATTRIBUTE_ENCODE_SET),
     );
-    let mut response = Response::new(Body::from_stream(ReaderStream::new(file)));
+    let body = match cleanup {
+        Some(cleanup) => Body::from_stream(CleanupStream::new(ReaderStream::new(file), cleanup)),
+        None => Body::from_stream(ReaderStream::new(file)),
+    };
+    let mut response = Response::new(body);
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
@@ -467,7 +622,7 @@ pub async fn download_conversion(
     if let Ok(value) = result.sha256.parse() {
         headers.insert("x-checksum-sha256", value);
     }
-    response
+    Ok(response)
 }
 
 pub async fn not_found(Extension(request_id): Extension<RequestId>) -> Response {
@@ -588,6 +743,13 @@ struct UploadedFile {
     guard: WorkDirGuard,
 }
 
+/// 已校验并落盘的上传文件，尚未决定走异步任务还是同步转换。
+struct PendingUpload {
+    file: UploadedFile,
+    target_format: String,
+    filter: &'static str,
+}
+
 struct WorkDirGuard {
     path: PathBuf,
     armed: bool,
@@ -614,6 +776,65 @@ impl Drop for WorkDirGuard {
                 error = %error,
                 "failed to clean up aborted upload"
             );
+        }
+    }
+}
+
+/// 同步转换的响应体包装：正常结束、报错或客户端断开时均清理任务工作目录。
+struct CleanupStream<S> {
+    inner: S,
+    _cleanup: StreamCleanup,
+}
+
+impl<S> CleanupStream<S> {
+    fn new(inner: S, cleanup: StreamCleanup) -> Self {
+        Self {
+            inner,
+            _cleanup: cleanup,
+        }
+    }
+}
+
+impl<S: Stream + Unpin> Stream for CleanupStream<S> {
+    type Item = S::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.get_mut().inner).poll_next(cx)
+    }
+}
+
+struct StreamCleanup {
+    work_dir: Option<PathBuf>,
+}
+
+impl StreamCleanup {
+    fn new(work_dir: PathBuf) -> Self {
+        Self {
+            work_dir: Some(work_dir),
+        }
+    }
+}
+
+impl Drop for StreamCleanup {
+    fn drop(&mut self) {
+        let Some(work_dir) = self.work_dir.take() else {
+            return;
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move { worker::cleanup_work_dir(&work_dir).await });
+            }
+            Err(_) => {
+                if let Err(error) = std::fs::remove_dir_all(&work_dir)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    tracing::warn!(
+                        path = %work_dir.display(),
+                        error = %error,
+                        "failed to clean up synchronous conversion workspace"
+                    );
+                }
+            }
         }
     }
 }

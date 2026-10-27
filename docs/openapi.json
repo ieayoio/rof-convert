@@ -314,6 +314,160 @@
         }
       }
     },
+    "/api/v1/conversions/sync": {
+      "post": {
+        "tags": ["Conversions"],
+        "summary": "同步转换",
+        "description": "在单次请求内完成转换并直接返回文件流。请求会等待可用转换并发许可，排队与转换分别受 conversionTimeoutSeconds 约束；失败时返回统一错误结构，不创建任务记录。耗时较长或批量场景请使用异步接口。",
+        "operationId": "createConversionSync",
+        "parameters": [
+          {
+            "name": "targetFormat",
+            "in": "query",
+            "required": false,
+            "description": "目标格式扩展名（不含点）。也可通过 multipart 文本字段 `targetFormat` 传入；两者同时存在时必须一致。",
+            "schema": {
+              "type": "string",
+              "example": "pdf"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "源文件，扩展名必须在支持的源格式列表中且不超过 maxUploadBytes。"
+                  },
+                  "targetFormat": {
+                    "type": "string",
+                    "description": "目标格式扩展名（可替代 query 参数）。",
+                    "example": "pdf"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "转换结果文件流",
+            "headers": {
+              "Content-Disposition": {
+                "description": "附件文件名，同时提供 RFC 5987 的 filename* 形式",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Checksum-SHA256": {
+                "description": "结果文件 SHA-256 摘要",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/XRequestId"
+              }
+            },
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "description": "文件超过大小限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "请求或文件格式不受支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "不支持的格式转换组合",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "转换失败（CONVERSION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "服务容量已满或正在关闭",
+            "headers": {
+              "Retry-After": {
+                "description": "建议重试等待秒数",
+                "schema": {
+                  "type": "integer",
+                  "example": 5
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "转换超时（CONVERSION_TIMEOUT）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/conversions/{jobId}": {
       "parameters": [
         {

@@ -170,6 +170,7 @@ server {
 
 - `client_max_body_size` 应大于 `ROF_MAX_UPLOAD_MB` 加 multipart 开销，否则请求会在网关被拒绝。
 - 网关的读写超时应大于 `ROF_REQUEST_TIMEOUT_SECS`，避免应用返回统一错误前连接已被网关断开。
+- 同步转换接口（`POST /api/v1/conversions/sync`）在单请求内完成转换并流式返回文件，网关超时需覆盖“排队 + 转换 + 传输”，否则客户端可能在拿到文件前被断开。
 - 透传 `X-Request-Id` 可以串联网关与应用日志；如果网关未提供，应用会自动生成。
 - 不要让网关覆盖或删除 `Content-Disposition`、`X-Checksum-SHA256` 和 `X-Request-Id` 响应头。
 - TLS、mTLS、OIDC 等认证可在网关层补充；应用本身只实现 API Key 鉴权。
@@ -278,6 +279,7 @@ containers:
 - 先以默认值或每实例 2 个并发为基线。
 - 用生产代表性文档（大文档、复杂表格、中文排版、演示文稿）压测单次耗时、峰值 CPU 和峰值内存。
 - 观察超时率与 CPU 使用率后再调整；并发数过高可能导致所有任务变慢并触发超时。
+- 同步转换与异步任务共享同一并发额度；同步请求过多会挤占异步任务容量，建议在网关层限制其 QPS。
 - 限制应同时考虑容器 CPU limit 和节点资源。
 
 ### 磁盘

@@ -23,6 +23,7 @@ pub fn build_router(state: AppState) -> Router {
     let protected_api = Router::new()
         .route("/formats", get(api::list_formats))
         .route("/conversions", post(api::create_conversion))
+        .route("/conversions/sync", post(api::create_conversion_sync))
         .route(
             "/conversions/{job_id}",
             get(api::get_conversion).delete(api::delete_conversion),

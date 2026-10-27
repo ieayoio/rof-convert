@@ -15,6 +15,7 @@
 
 - 支持文档、表格、演示文稿的常见格式互转
 - 异步任务：创建任务立即返回 `202`，通过任务状态轮询结果
+- 可选同步转换：单请求内完成转换并流式返回文件，与异步任务共享并发额度
 - 结果下载附带 `SHA-256` 校验值和 RFC 5987 文件名
 - 统一响应结构：`success/code/message/requestId/timestamp/data/details`
 - `X-Request-Id` 透传或自动生成，日志可按请求追踪
@@ -110,6 +111,7 @@ curl -s -H 'X-API-Key: replace-with-a-random-secret' \
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | `POST` | `/api/v1/conversions` | 创建转换任务 | 业务鉴权 |
+| `POST` | `/api/v1/conversions/sync` | 同步转换并直接返回文件 | 业务鉴权 |
 | `GET` | `/api/v1/conversions/{jobId}` | 查询任务状态 | 业务鉴权 |
 | `GET` | `/api/v1/conversions/{jobId}/download` | 下载转换结果 | 业务鉴权 |
 | `DELETE` | `/api/v1/conversions/{jobId}` | 取消任务并清理数据 | 业务鉴权 |
@@ -235,6 +237,19 @@ curl -fL -H 'X-API-Key: replace-with-a-random-secret' \
 - `X-Content-Type-Options: nosniff`
 
 任务尚未完成时返回 `409`，并在可能的情况下返回 `Retry-After`；任务失败时返回 `409` 并附带任务错误信息。
+
+### 同步转换
+
+需要在单次请求内拿到结果时，使用同步接口：
+
+```bash
+curl -fL -X POST 'http://127.0.0.1:8080/api/v1/conversions/sync?targetFormat=pdf' \
+  -H 'X-API-Key: replace-with-a-random-secret' \
+  -F 'file=@./report.docx' \
+  -o report.pdf
+```
+
+成功时响应体即转换后的文件流，响应头与下载接口一致（`Content-Disposition`、`X-Checksum-SHA256`、`Content-Type`、`Content-Length`）。该接口与异步任务共享 `max_concurrency` 并发额度：等待许可最多 `conversion.timeout_secs`，转换本身同样受该超时约束，整个请求由 `server.request_timeout_secs` 兜底。失败时返回统一错误结构，不会创建任务记录；容量不足返回 `503` 并带 `Retry-After`。
 
 ### 取消并删除任务
 
@@ -413,6 +428,7 @@ docs/
 
 - 任务状态和结果索引保存在单实例内存中，不支持多副本共享。
 - 不提供 Range 分段下载；大文件下载建议在内网直连。
+- 同步转换会占用一个请求连接和一个转换并发额度，长耗时或批量场景请使用异步接口。
 - 演示文稿转 PNG 仅导出首页。
 - 不支持 PDF 作为源格式。
 - API Key、并发数等配置不支持热加载。
