@@ -226,6 +226,8 @@ docker run --rm -p 8080:8080 \
 - 生产环境可增加 `--read-only`、`--tmpfs /tmp`、`--cap-drop=ALL`、`--security-opt no-new-privileges` 和内存/CPU 限制。LibreOffice 需要写入 `/tmp`，`--read-only` 时必须提供可写 tmpfs。
 - 不要把容器内 `/var/lib/rof-convert` 挂载为只读。
 
+许可证提示：本项目源代码采用 Apache-2.0。镜像中安装的 LibreOffice 主要采用 MPL-2.0，并包含其他许可证组件。分发镜像、安装包或离线包时，应保留相应版权与许可证声明，并按 MPL-2.0 要求提供源码获取方式；如果修改过 MPL 覆盖的文件，还需要提供修改后的源码。LibreOffice 不适用本项目的 Apache-2.0 许可证。
+
 ## Kubernetes 建议
 
 ```yaml

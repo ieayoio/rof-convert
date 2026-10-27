@@ -384,3 +384,11 @@ docs/
 | 临时目录权限错误 | 确认目录属主为运行用户，权限为 `0700`，且不是只读挂载 |
 
 更完整的部署、容量规划和加固建议见[部署与运维](docs/deployment.md)。
+
+## 许可证
+
+本项目源代码采用 [Apache License 2.0](LICENSE)。
+
+运行时会调用独立的 LibreOffice `soffice` 可执行文件。LibreOffice 主要采用 [MPL-2.0](https://www.libreoffice.org/about-us/licenses)，并包含其他第三方许可证组件；LibreOffice 不适用本项目的 Apache-2.0 许可证。如果分发包含 LibreOffice 的容器镜像、安装包或离线包，请同时遵守 LibreOffice 及其第三方组件的许可证要求，保留相应版权、许可证和源码获取说明。
+
+Apache License 2.0 不授予 LibreOffice 名称、Logo 或商标使用权。第三方 Rust 依赖保留其各自的许可证。

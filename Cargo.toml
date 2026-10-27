@@ -2,6 +2,8 @@
 name = "rof-convert"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+authors = ["ieayoio"]
 
 [dependencies]
 axum = { version = "0.8.9", features = ["multipart", "macros"] }
