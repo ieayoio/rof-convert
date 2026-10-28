@@ -8,7 +8,7 @@
 
 - [架构设计](docs/architecture.md)：模块职责、任务生命周期、并发与清理机制
 - [部署与运维](docs/deployment.md)：systemd、反向代理、容器、容量规划与故障排查
-- [OpenAPI 契约](docs/openapi.json)：完整接口定义；运行时由 `[docs].enabled`（`ROF_DOCS_ENABLED`）控制是否暴露 `/api/v1/docs` 与 `/api/v1/openapi.json`
+- [OpenAPI 契约](docs/openapi.json)：完整接口定义；运行时由 `[docs].enabled`（`ROF_DOCS_ENABLED`）控制是否暴露 `/docs` 与 `/api/v1/openapi.json`
 - 当前版本：`0.1.0`
 
 ## 功能特性
@@ -113,7 +113,7 @@ docker run --rm -p 7654:7654 \
 ```
 
 - 任务目录使用宿主机目录挂载时，需先 `mkdir -p ./rof-convert-tmp && sudo chown 10001:10001 ./rof-convert-tmp`：容器内运行用户是 UID `10001`，目录属主不对时启动阶段会报 `failed to prepare temp dir ... Permission denied`。
-- 镜像默认按生产环境运行：内置 `ROF_ENV=prod` 与 `ROF_DOCS_ENABLED=false`，Swagger UI（`/api/v1/docs`）和 `/api/v1/openapi.json` 不会暴露；临时排查时用 `-e ROF_DOCS_ENABLED=true` 开启。
+- 镜像默认按生产环境运行：内置 `ROF_ENV=prod` 与 `ROF_DOCS_ENABLED=false`，Swagger UI（`/docs`）和 `/api/v1/openapi.json` 不会暴露；临时排查时用 `-e ROF_DOCS_ENABLED=true` 开启。
 - 容器内已安装 LibreOffice（构建时从官方站点下载的最新稳定版，支持 `md` 等新过滤器）与 CJK 字体，无需在宿主机安装 `soffice`。
 - 构建参数、镜像源、卷权限、只读根文件系统与 Kubernetes 部署见[部署与运维](docs/deployment.md)。
 
@@ -205,7 +205,7 @@ curl -s -H 'X-API-Key: replace-with-a-random-secret' \
 | `GET` | `/healthz` | 存活探针 | 公开 |
 | `GET` | `/readyz` | 就绪探针 | 公开 |
 | `GET` | `/api/v1/openapi.json` | 获取 OpenAPI 契约（仅 `docs.enabled` 开启时存在） | 公开 |
-| `GET` | `/api/v1/docs` | Swagger UI 页面（仅 `docs.enabled` 开启时存在） | 公开 |
+| `GET` | `/docs` | Swagger UI 页面（仅 `docs.enabled` 开启时存在；`/api/v1/docs` 为兼容别名） | 公开 |
 
 ### 统一响应结构
 
@@ -406,7 +406,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 | `ROF_API_KEYS` | 空 | 逗号分隔的 API Key，最多 32 个；为空时不覆盖配置文件，文件也为空则关闭鉴权 |
 | `ROF_CORS_ORIGINS` | 空 | 逗号分隔的允许来源；`*` 不能与其他来源同时使用；为空时不覆盖配置文件，文件也为空则关闭 CORS |
 | `ROF_LOG_FORMAT` | `text` | 日志格式：`text` 或 `json`；生产配置为 `json` |
-| `ROF_DOCS_ENABLED` | 关闭 | 是否暴露 Swagger UI（`/api/v1/docs`）与 OpenAPI 契约（`/api/v1/openapi.json`）；dev 配置为开启，prod 配置为关闭 |
+| `ROF_DOCS_ENABLED` | 关闭 | 是否暴露 Swagger UI（`/docs`）与 OpenAPI 契约（`/api/v1/openapi.json`）；dev 配置为开启，prod 配置为关闭 |
 | `RUST_LOG` | `rof_convert=info` | 日志级别过滤，覆盖配置文件中的 `logging.filter` |
 
 补充说明：
@@ -419,7 +419,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 - `ROF_REQUEST_TIMEOUT_SECS` 约束 HTTP 请求处理，不等待转换完成；转换由 `ROF_CONVERSION_TIMEOUT_SECS` 独立控制。
 - API Key 应使用足够长的随机值，生产环境建议放在密钥管理系统或环境变量文件中，不要写入仓库或 `config/prod.toml`。
 - CORS 默认关闭；浏览器直连场景再按需配置。
-- 文档默认关闭：未配置 `[docs].enabled` 时不会注册任何文档路径；`config/dev.toml` 开启、`config/prod.toml` 关闭。关闭时 `/api/v1/docs` 与 `/api/v1/openapi.json` 均返回统一的 `404 NOT_FOUND`。
+- 文档默认关闭：未配置 `[docs].enabled` 时不会注册任何文档路径；`config/dev.toml` 开启、`config/prod.toml` 关闭。关闭时 `/docs`、`/api/v1/docs` 与 `/api/v1/openapi.json` 均返回统一的 `404 NOT_FOUND`。
 
 ## 错误码
 
@@ -513,7 +513,7 @@ docs/
 └── deployment.md
 ```
 
-修改 `docs/openapi.json` 后需要重新编译，运行时通过 `include_str!` 提供该文件。Swagger UI 由 `utoipa-swagger-ui` 静态资源内嵌提供（构建期无需联网），页面在 `/api/v1/docs`，直接加载 `/api/v1/openapi.json`；两者都受 `ROF_DOCS_ENABLED` 控制，生产环境默认不注册。
+修改 `docs/openapi.json` 后需要重新编译，运行时通过 `include_str!` 提供该文件。Swagger UI 由 `utoipa-swagger-ui` 静态资源内嵌提供（构建期无需联网），页面在 `/docs`（`/api/v1/docs` 为兼容地址），直接加载 `/api/v1/openapi.json`；两者都受 `ROF_DOCS_ENABLED` 控制，生产环境默认不注册。
 
 ## 已知限制
 

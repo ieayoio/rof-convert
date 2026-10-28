@@ -16,11 +16,13 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::{api, config::Config, middleware as app_middleware, state::AppState};
 
-/// Swagger UI 挂载路径（相对根路径）。
+/// Swagger UI 挂载路径（根路径下的短地址，方便直接访问）。
 ///
 /// `utoipa-swagger-ui` 对无尾斜杠的路径会发出 `Redirect::to("{path}/")`，该地址是绝对
-/// 路径、不会带上嵌套路由的前缀，因此必须写完整前缀并合并到根路由。
-pub const SWAGGER_UI_PATH: &str = "/api/v1/docs";
+/// 路径、不会带上嵌套路由的前缀，因此必须写完整的根路径并合并到根路由。
+pub const SWAGGER_UI_PATH: &str = "/docs";
+/// Swagger UI 兼容路径：旧版文档与已保存的链接仍可通过它访问同一个页面。
+pub const SWAGGER_UI_LEGACY_PATH: &str = "/api/v1/docs";
 /// OpenAPI 契约路径（相对 `/api/v1`）。
 pub const OPENAPI_SPEC_PATH: &str = "/openapi.json";
 
@@ -64,7 +66,9 @@ pub fn build_router(state: AppState) -> Router {
 
     // Swagger UI 依赖绝对路径重定向，只能与 `/api/v1` 的前缀在同一层注册。
     if config.docs_enabled {
-        router = router.merge(swagger_ui());
+        router = router
+            .merge(swagger_ui(SWAGGER_UI_PATH))
+            .merge(swagger_ui(SWAGGER_UI_LEGACY_PATH));
     }
 
     let mut router = router
@@ -82,14 +86,14 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 /// Swagger UI 页面：只渲染界面，契约由 `api::openapi_spec` 统一提供。
-fn swagger_ui() -> Router<AppState> {
+fn swagger_ui(path: &'static str) -> Router<AppState> {
     // 浏览器以页面地址为基准解析该地址，因此必须写全 `/api/v1` 前缀。
     let ui_config = utoipa_swagger_ui::Config::new([utoipa_swagger_ui::Url::new(
         "rof-convert API",
         "/api/v1/openapi.json",
     )]);
 
-    utoipa_swagger_ui::SwaggerUi::new(SWAGGER_UI_PATH)
+    utoipa_swagger_ui::SwaggerUi::new(path)
         .config(ui_config)
         .into()
 }

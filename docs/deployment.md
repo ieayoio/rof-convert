@@ -355,7 +355,7 @@ LibreOffice 和字体加载会打开较多文件，建议 `LimitNOFILE=65536`，
 - 限制入口来源、目标端口和出站流量；如业务允许，限制容器外联。
 - 使用 `no-new-privileges`、能力裁剪、只读根文件系统、cgroup 资源限制。
 - LibreOffice 解析不可信文档，独立 profile 只解决并发锁，不是安全沙箱。处理外部上传时应在容器/虚拟机中隔离，并限制 CPU、内存、磁盘和网络。
-- 生产环境保持 `ROF_DOCS_ENABLED=false`（`config/prod.toml` 默认关闭），此时 `/api/v1/docs` 与 `/api/v1/openapi.json` 均未注册，返回 `404`；需要临时排查时才在受信网络中开启。
+- 生产环境保持 `ROF_DOCS_ENABLED=false`（`config/prod.toml` 默认关闭），此时 `/docs` 与 `/api/v1/openapi.json` 均未注册，返回 `404`；需要临时排查时才在受信网络中开启。
 - 健康检查路径通常应仅对集群内部开放。
 - 不要将 `ROF_TEMP_DIR` 放在共享可写目录；任务目录包含用户上传内容和转换结果。
 

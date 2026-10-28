@@ -93,7 +93,7 @@ CORS
 
 - `request_context` 最外层之一，确保超时、鉴权和 panic 响应也能带上 `X-Request-Id`。
 - CORS 位于最外层，OPTIONS 预检可以在鉴权前返回。
-- 健康检查、Swagger UI（`/api/v1/docs`）与 `/api/v1/openapi.json` 不使用 API Key 鉴权；其他 `/api/v1` 接口受保护。
+- 健康检查、Swagger UI（`/docs`，兼容 `/api/v1/docs`）与 `/api/v1/openapi.json` 不使用 API Key 鉴权；其他 `/api/v1` 接口受保护。
 - 文档路由受 `[docs].enabled`（`ROF_DOCS_ENABLED`）控制，关闭时完全不注册，不经过鉴权也不会返回 `401`。
 - panic 被请求上下文捕获，返回统一 `INTERNAL_ERROR`，避免连接直接断开。
 
