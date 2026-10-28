@@ -184,8 +184,9 @@ server {
 项目根目录提供 [Dockerfile](../Dockerfile)，包含：
 
 - Rust 多阶段构建，先缓存依赖层再复制源码
-- 默认使用 rsproxy Cargo 镜像与清华 Debian 镜像，适配中国大陆网络
-- 通过 `RUST_IMAGE`、`DEBIAN_IMAGE`、`CARGO_REGISTRY`、`DEBIAN_MIRROR` 构建参数覆盖基础镜像和软件源
+- LibreOffice 不使用发行版仓库的版本，而是在构建时从 The Document Foundation 官方站点下载官方 `.deb` 包，默认安装最新稳定版（Debian bookworm 自带的 7.4 没有 Markdown/CommonMark 过滤器）
+- 默认使用 rsproxy Cargo 镜像与中科大 Debian 镜像，适配中国大陆网络
+- 通过 `RUST_IMAGE`、`DEBIAN_IMAGE`、`CARGO_REGISTRY`、`DEBIAN_MIRROR`、`LO_MIRROR`、`LO_VERSION` 构建参数覆盖基础镜像、软件源和 LibreOffice 版本
 - 非 root 用户、`tini` 作为 PID 1、Docker `HEALTHCHECK`
 - 默认按生产环境构建：镜像内置 `ENV ROF_ENV=prod` 与 `ROF_DOCS_ENABLED=false`，内包含 `config/prod.toml`
 
@@ -207,6 +208,12 @@ docker build \
   --build-arg CARGO_REGISTRY=sparse+https://mirrors.ustc.edu.cn/crates.io-index/ \
   --build-arg DEBIAN_MIRROR=http://mirrors.ustc.edu.cn \
   -t rof-convert:0.1.0 .
+
+# 固定 LibreOffice 版本（默认 latest，每次构建解析当时的最新稳定版）
+docker build --build-arg LO_VERSION=26.8.1 -t rof-convert:0.1.0 .
+
+# LibreOffice 官方站点较慢时改用国内镜像
+docker build --build-arg LO_MIRROR=https://mirrors.aliyun.com/tdf -t rof-convert:0.1.0 .
 ```
 
 运行：
@@ -220,6 +227,10 @@ docker run --rm -p 7654:7654 \
 
 注意：
 
+- `LO_VERSION` 默认 `latest`，构建时会读取镜像站目录索引解析最新稳定版，因此同一份代码在不同时间构建可能得到不同的 LibreOffice 版本；需要可复现镜像时固定具体版本号。
+- LibreOffice 官方包没有 `-nogui` 精简变体，镜像比使用发行版仓库时大约多几百 MB；构建过程会删除帮助、图库、模板等运行期不需要的内容。
+- 官方包的 `Depends` 并未覆盖全部运行库（如 `libXinerama.so.1`、`libX11-xcb.so.1`），Dockerfile 额外显式安装了一批 X11/图形库以满足无头启动；升级 LibreOffice 后若 `soffice --version` 失败，构建会用 `ldd` 打印缺失的库，把它加入安装列表即可。
+- 官方包安装后由镜像写入 `/usr/bin/soffice` 包装脚本，配置中的 `soffice_bin = "soffice"` 仍按 `PATH` 查找即可。
 - 建议在 `.dockerignore` 中排除 `target/` 和 `data/`，避免构建上下文过大。项目已提供 `.dockerignore`。
 - 镜像默认以 `ROF_ENV=prod` 启动，并显式设置 `ROF_DOCS_ENABLED=false`，因此不会暴露 Swagger UI 与 `/api/v1/openapi.json`；自定义配置可通过挂载文件并设置 `ROF_CONFIG_FILE` 覆盖，临时排查文档时用 `-e ROF_DOCS_ENABLED=true` 开启。
 - 生产环境运行时必须通过 `ROF_API_KEYS` 注入密钥；镜像内的 `config/prod.toml` 不保存真实密钥。

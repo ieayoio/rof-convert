@@ -100,6 +100,12 @@ ROF_API_KEYS='replace-with-a-random-secret' \
 ```bash
 docker build -t rof-convert:0.1.0 .
 
+# 固定 LibreOffice 版本（26.8.1 支持 md 等新过滤器），并使用国内镜像加速下载
+docker build \
+  --build-arg LO_VERSION=26.8.1 \
+  --build-arg LO_MIRROR=https://mirrors.aliyun.com/tdf \
+  -t rof-convert:0.1.0 .
+
 docker run --rm -p 7654:7654 \
   -e ROF_API_KEYS='replace-with-a-random-secret' \
   -v rof-convert-tmp:/var/lib/rof-convert/tmp \
@@ -107,7 +113,7 @@ docker run --rm -p 7654:7654 \
 ```
 
 - 镜像默认按生产环境运行：内置 `ROF_ENV=prod` 与 `ROF_DOCS_ENABLED=false`，Swagger UI（`/api/v1/docs`）和 `/api/v1/openapi.json` 不会暴露；临时排查时用 `-e ROF_DOCS_ENABLED=true` 开启。
-- 容器内已安装 LibreOffice 与 CJK 字体，无需在宿主机安装 `soffice`。
+- 容器内已安装 LibreOffice（构建时从官方站点下载的最新稳定版，支持 `md` 等新过滤器）与 CJK 字体，无需在宿主机安装 `soffice`。
 - 构建参数、镜像源、卷权限、只读根文件系统与 Kubernetes 部署见[部署与运维](docs/deployment.md)。
 
 ### 验证服务
@@ -417,7 +423,7 @@ cargo test
 代码结构：
 
 ```text
-Dockerfile         # 多阶段生产镜像（国内构建镜像源）
+Dockerfile         # 多阶段生产镜像（国内构建镜像源 + 官方最新 LibreOffice）
 .dockerignore
 
 src/
