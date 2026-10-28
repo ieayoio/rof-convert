@@ -45,7 +45,15 @@ async fn main() -> ExitCode {
 }
 
 async fn run(mut config: Config) -> Result<(), Box<dyn std::error::Error>> {
-    prepare_temp_dir(&mut config).await?;
+    // 临时目录是最常见的启动失败原因（目录不存在、属主不是运行用户、只读挂载），
+    // 这里补上路径与配置来源，避免只剩一个裸的 `Permission denied`。
+    prepare_temp_dir(&mut config).await.map_err(|error| {
+        format!(
+            "failed to prepare temp dir `{}` from `{}`: {error}",
+            config.temp_dir.display(),
+            config.config_file.display()
+        )
+    })?;
     cleanup_stale_workspaces(&config).await;
 
     let capabilities = match engine::find_executable(&config.soffice_bin) {
@@ -118,10 +126,27 @@ async fn prepare_temp_dir(config: &mut Config) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&config.temp_dir, std::fs::Permissions::from_mode(0o700))
-            .await?;
+        // 容器 bind mount / 共享卷常由 root 创建，运行用户不是属主时 chmod 会返回 EPERM。
+        // 权限收紧只是加固，真正的判据是目录可写，所以这里降级为警告，由下面的写探测把关。
+        if let Err(error) =
+            tokio::fs::set_permissions(&config.temp_dir, std::fs::Permissions::from_mode(0o700))
+                .await
+        {
+            tracing::warn!(
+                path = %config.temp_dir.display(),
+                error = %error,
+                "failed to tighten temp dir permissions to 0700; keeping the existing mode"
+            );
+        }
     }
     config.temp_dir = tokio::fs::canonicalize(&config.temp_dir).await?;
+
+    // 主动探测可写性：目录不可写时在启动阶段就报错，而不是等到第一次转换才失败。
+    let probe = config
+        .temp_dir
+        .join(format!(".write-probe-{}", Uuid::new_v4()));
+    tokio::fs::write(&probe, b"").await?;
+    let _ = tokio::fs::remove_file(&probe).await;
     Ok(())
 }
 
