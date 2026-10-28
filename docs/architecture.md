@@ -160,8 +160,8 @@ soffice 的 stdout 被丢弃，stderr 仅在日志中保留截断片段；不会
 
 | 机制 | 作用 |
 |---|---|
-| `ROF_MAX_CONCURRENCY` | 限制同时运行的 soffice 数量，核心资源保护 |
-| `ROF_MAX_ACTIVE_JOBS` | 限制排队 + 运行任务总数，防止请求无限堆积 |
+| `ROF_MAX_CONCURRENCY` | 限制同时运行的 soffice 数量（默认 `16`），核心资源保护 |
+| `ROF_MAX_ACTIVE_JOBS` | 限制排队 + 运行任务总数（默认 `200`），防止请求无限堆积 |
 | `ROF_MAX_UPLOAD_MB` | 限制单文件大小，同时有请求体上限作为兜底 |
 | `ROF_CONVERSION_TIMEOUT_SECS` | 限制单次 soffice 执行时间 |
 | `ROF_REQUEST_TIMEOUT_SECS` | 限制 HTTP 请求处理时间，包含上传 |
@@ -169,6 +169,8 @@ soffice 的 stdout 被丢弃，stderr 仅在日志中保留截断片段；不会
 | 每任务独立 profile | 避免 LibreOffice 单实例锁导致并发互相阻塞 |
 
 容量限制是入口处的软上限：极端并发下可能短暂超过 `ROF_MAX_ACTIVE_JOBS`，但并发执行的 soffice 数量始终受信号量约束。
+
+“并发请求数”与“并发转换数”是两个层级：默认 `max_concurrency=16` / `max_active_jobs=200` 的组合可接受约 50 个同时提交的请求，其中 16 个立即执行、其余在内存队列排队等待信号量，排队不占用 HTTP 连接。需要提高同时转换的数量时调 `ROF_MAX_CONCURRENCY`，并按 `≈ CPU 核数` 与单任务峰值内存换算资源。
 
 ## 文件布局与清理
 

@@ -12,8 +12,10 @@ request_timeout_secs = 300
 # 可改为绝对路径，例如 "/usr/bin/soffice"
 soffice_bin = "soffice"
 timeout_secs = 120
-max_concurrency = 2
-max_active_jobs = 100
+# 同时运行的 soffice 进程数，建议约等于 CPU 核数
+max_concurrency = 16
+# 排队 + 运行的任务总数上限，约为并发数的 4 倍
+max_active_jobs = 200
 job_ttl_secs = 3600
 
 [storage]

@@ -327,8 +327,8 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 | `ROF_MAX_UPLOAD_MB` | `50` | 单文件上传上限，范围 1-1024 MB |
 | `ROF_CONVERSION_TIMEOUT_SECS` | `120` | 单次 soffice 转换超时，范围 5-3600 秒 |
 | `ROF_REQUEST_TIMEOUT_SECS` | `300` | HTTP 请求超时（包含上传），范围 10-3600 秒 |
-| `ROF_MAX_CONCURRENCY` | `2` | 同时运行的 soffice 进程数，范围 1-64 |
-| `ROF_MAX_ACTIVE_JOBS` | `100` | 队列中及运行中的任务总数上限，需不小于并发数，最大 10000 |
+| `ROF_MAX_CONCURRENCY` | `16` | 同时运行的 soffice 进程数，范围 1-64；建议约等于 CPU 核数 |
+| `ROF_MAX_ACTIVE_JOBS` | `200` | 队列中及运行中的任务总数上限，需不小于并发数，最大 10000 |
 | `ROF_JOB_TTL_SECS` | `3600` | 终态任务记录与结果保留时间，范围 60-604800 秒 |
 | `ROF_TEMP_DIR` | `./data/tmp` | 任务工作目录；生产配置为 `/var/lib/rof-convert/tmp`；启动时创建并设置 `0700` 权限 |
 | `ROF_SOFFICE_BIN` | `soffice` | soffice 可执行文件，可传 PATH 名称或绝对路径 |
@@ -344,6 +344,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 - 配置文件按字面值解析，不执行环境变量或 `~` 展开；`temp_dir` 使用相对路径时相对于进程工作目录。
 - 配置文件中 `auth.api_keys` 和 `cors.allowed_origins` 使用 TOML 数组，环境变量使用逗号分隔。
 - `ROF_MAX_ACTIVE_JOBS` 是排队任务与运行任务的合计上限，超限返回 `503` 与 `Retry-After`。
+- 默认 `ROF_MAX_CONCURRENCY=16`、`ROF_MAX_ACTIVE_JOBS=200` 可接受约 50 个并发提交：16 个立即转换，其余排队等待信号量；调高并发数需同步核算 CPU 与单任务峰值内存。
 - `ROF_REQUEST_TIMEOUT_SECS` 约束 HTTP 请求处理，不等待转换完成；转换由 `ROF_CONVERSION_TIMEOUT_SECS` 独立控制。
 - API Key 应使用足够长的随机值，生产环境建议放在密钥管理系统或环境变量文件中，不要写入仓库或 `config/prod.toml`。
 - CORS 默认关闭；浏览器直连场景再按需配置。

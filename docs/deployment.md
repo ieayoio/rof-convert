@@ -62,8 +62,8 @@ ROF_HOST=127.0.0.1
 ROF_PORT=8080
 ROF_TEMP_DIR=/var/lib/rof-convert/tmp
 ROF_MAX_UPLOAD_MB=50
-ROF_MAX_CONCURRENCY=2
-ROF_MAX_ACTIVE_JOBS=100
+ROF_MAX_CONCURRENCY=16
+ROF_MAX_ACTIVE_JOBS=200
 ROF_JOB_TTL_SECS=3600
 ROF_API_KEYS=replace-with-a-random-secret
 ROF_SOFFICE_BIN=/usr/bin/soffice
@@ -275,12 +275,14 @@ containers:
 
 ### 并发
 
-`ROF_MAX_CONCURRENCY` 控制同时运行的 LibreOffice 进程数，默认 `2`。LibreOffice 转换通常 CPU 密集，也可能使用较多内存：
+`ROF_MAX_CONCURRENCY` 控制同时运行的 LibreOffice 进程数，默认 `16`，`ROF_MAX_ACTIVE_JOBS` 默认 `200`。LibreOffice 转换通常 CPU 密集，也可能使用较多内存：
 
-- 先以默认值或每实例 2 个并发为基线。
-- 用生产代表性文档（大文档、复杂表格、中文排版、演示文稿）压测单次耗时、峰值 CPU 和峰值内存。
-- 观察超时率与 CPU 使用率后再调整；并发数过高可能导致所有任务变慢并触发超时。
-- 同步转换与异步任务共享同一并发额度；同步请求过多会挤占异步任务容量，建议在网关层限制其 QPS。
+- 并发请求数不等于并发转换数：默认组合可接受约 50 个同时提交的请求，其中 16 个立即执行，其余在内存队列排队（不占用 HTTP 连接）。
+- `ROF_MAX_CONCURRENCY` 建议约等于容器 CPU limit（1 核对应 1 个 soffice），内存按 `并发数 × 单任务峰值内存` 估算；16 并发建议至少 8 GiB，生产应按代表性文档实测。
+- `ROF_MAX_ACTIVE_JOBS` 建议取并发数的 4 倍左右，且不小于期望接受的并发提交数；低于该值时提交会返回 `503` 并带 `Retry-After`。
+- 用生产代表性文档（大文档、复杂表格、中文排版、演示文稿）压测单次耗时、峰值 CPU 和峰值内存后再微调。
+- 观察超时率与 CPU 使用率；并发数过高可能导致所有任务变慢并触发 `CONVERSION_TIMEOUT`。
+- 同步转换与异步任务共享同一并发额度；同步请求过多会挤占异步任务容量，大约 50 并发提交的场景建议使用异步接口，并在网关层限制同步接口 QPS。
 - 限制应同时考虑容器 CPU limit 和节点资源。
 
 ### 磁盘
@@ -292,7 +294,7 @@ containers:
               + 结果文件大小 × 保留期内的终态任务数
 ```
 
-`ROF_MAX_ACTIVE_JOBS` 为 100、上传上限为 50 MB 时，最坏情况仅上传文件就可能接近 5 GB。建议：
+`ROF_MAX_ACTIVE_JOBS` 为 200、上传上限为 50 MB 时，最坏情况仅上传文件就可能接近 10 GB。建议：
 
 - 为 `ROF_TEMP_DIR` 单独挂载磁盘或卷并监控使用率；
 - 根据结果大小和业务量调整 `ROF_JOB_TTL_SECS`；

@@ -12,8 +12,11 @@ request_timeout_secs = 300
 # 生产环境建议使用绝对路径，或通过 ROF_SOFFICE_BIN 覆盖
 soffice_bin = "soffice"
 timeout_secs = 120
-max_concurrency = 2
-max_active_jobs = 100
+# 同时运行的 soffice 进程数，建议约等于容器 CPU limit（单位为核）
+# 16 核约可支撑 50 个并发提交：16 个立即执行，其余排队，内存建议不小于 8 GiB
+max_concurrency = 16
+# 排队 + 运行的任务总数上限，约为并发数的 4 倍；低于期望并发数会返回 503
+max_active_jobs = 200
 job_ttl_secs = 3600
 
 [storage]

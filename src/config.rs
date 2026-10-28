@@ -15,7 +15,7 @@
 //! - `ROF_MAX_UPLOAD_MB`（默认 `50`）
 //! - `ROF_CONVERSION_TIMEOUT_SECS`（默认 `120`）
 //! - `ROF_REQUEST_TIMEOUT_SECS`（默认 `300`）
-//! - `ROF_MAX_CONCURRENCY`（默认 `2`）、`ROF_MAX_ACTIVE_JOBS`（默认 `100`）
+//! - `ROF_MAX_CONCURRENCY`（默认 `16`）、`ROF_MAX_ACTIVE_JOBS`（默认 `200`）
 //! - `ROF_JOB_TTL_SECS`（默认 `3600`）
 //! - `ROF_TEMP_DIR`（默认 `./data/tmp`）
 //! - `ROF_SOFFICE_BIN`（默认 `soffice`）
@@ -46,8 +46,8 @@ const DEFAULT_PORT: u16 = 8080;
 const DEFAULT_MAX_UPLOAD_MB: usize = 50;
 const DEFAULT_CONVERSION_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 300;
-const DEFAULT_MAX_CONCURRENCY: usize = 2;
-const DEFAULT_MAX_ACTIVE_JOBS: usize = 100;
+const DEFAULT_MAX_CONCURRENCY: usize = 16;
+const DEFAULT_MAX_ACTIVE_JOBS: usize = 200;
 const DEFAULT_JOB_TTL_SECS: u64 = 3600;
 const DEFAULT_TEMP_DIR: &str = "./data/tmp";
 const DEFAULT_SOFFICE_BIN: &str = "soffice";
@@ -690,8 +690,8 @@ mod tests {
             max_upload_bytes: 50 * MIB,
             conversion_timeout: Duration::from_secs(120),
             request_timeout: Duration::from_secs(300),
-            max_concurrency: 2,
-            max_active_jobs: 100,
+            max_concurrency: 16,
+            max_active_jobs: 200,
             job_ttl: Duration::from_secs(3600),
             temp_dir: PathBuf::from("./data/tmp"),
             soffice_bin: "soffice".to_string(),
