@@ -23,4 +23,5 @@ toml = "1.1.8"
 tower-http = { version = "0.7.1", features = ["cors"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+utoipa-swagger-ui = { version = "10.0.2", default-features = false, features = ["axum", "vendored"] }
 uuid = { version = "1.29.0", features = ["v4"] }

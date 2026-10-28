@@ -8,7 +8,7 @@
 
 - [架构设计](docs/architecture.md)：模块职责、任务生命周期、并发与清理机制
 - [部署与运维](docs/deployment.md)：systemd、反向代理、容器、容量规划与故障排查
-- [OpenAPI 契约](docs/openapi.json)：完整接口定义，也可在运行时访问 `/api/v1/openapi.json`
+- [OpenAPI 契约](docs/openapi.json)：完整接口定义；运行时由 `[docs].enabled`（`ROF_DOCS_ENABLED`）控制是否暴露 `/api/v1/docs` 与 `/api/v1/openapi.json`
 - 当前版本：`0.1.0`
 
 ## 功能特性
@@ -106,7 +106,7 @@ curl -s -H 'X-API-Key: replace-with-a-random-secret' \
 
 ## API 概览
 
-业务接口统一使用 `/api/v1` 前缀。配置了 API Key（`[auth].api_keys` 或环境变量 `ROF_API_KEYS`）后，除健康检查和 OpenAPI 契约外，其余接口都需要鉴权。鉴权支持 `X-API-Key: <key>` 或 `Authorization: Bearer <key>` 两种形式。
+业务接口统一使用 `/api/v1` 前缀。配置了 API Key（`[auth].api_keys` 或环境变量 `ROF_API_KEYS`）后，除健康检查和文档路径（仅在开启时存在）外，其余接口都需要鉴权。鉴权支持 `X-API-Key: <key>` 或 `Authorization: Bearer <key>` 两种形式。
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -118,7 +118,8 @@ curl -s -H 'X-API-Key: replace-with-a-random-secret' \
 | `GET` | `/api/v1/formats` | 查询格式矩阵与运行限制 | 业务鉴权 |
 | `GET` | `/healthz` | 存活探针 | 公开 |
 | `GET` | `/readyz` | 就绪探针 | 公开 |
-| `GET` | `/api/v1/openapi.json` | 获取 OpenAPI 契约 | 公开 |
+| `GET` | `/api/v1/openapi.json` | 获取 OpenAPI 契约（仅 `docs.enabled` 开启时存在） | 公开 |
+| `GET` | `/api/v1/docs` | Swagger UI 页面（仅 `docs.enabled` 开启时存在） | 公开 |
 
 ### 统一响应结构
 
@@ -298,6 +299,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 | `[auth]` | `api_keys`（字符串数组） | `ROF_API_KEYS`（逗号分隔） |
 | `[cors]` | `allowed_origins`（字符串数组） | `ROF_CORS_ORIGINS`（逗号分隔） |
 | `[logging]` | `format`、`filter` | `ROF_LOG_FORMAT`、`RUST_LOG` |
+| `[docs]` | `enabled` | `ROF_DOCS_ENABLED` |
 
 环境变量表：
 
@@ -318,6 +320,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 | `ROF_API_KEYS` | 空 | 逗号分隔的 API Key，最多 32 个；为空时不覆盖配置文件，文件也为空则关闭鉴权 |
 | `ROF_CORS_ORIGINS` | 空 | 逗号分隔的允许来源；`*` 不能与其他来源同时使用；为空时不覆盖配置文件，文件也为空则关闭 CORS |
 | `ROF_LOG_FORMAT` | `text` | 日志格式：`text` 或 `json`；生产配置为 `json` |
+| `ROF_DOCS_ENABLED` | 关闭 | 是否暴露 Swagger UI（`/api/v1/docs`）与 OpenAPI 契约（`/api/v1/openapi.json`）；dev 配置为开启，prod 配置为关闭 |
 | `RUST_LOG` | `rof_convert=info` | 日志级别过滤，覆盖配置文件中的 `logging.filter` |
 
 补充说明：
@@ -329,6 +332,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 - `ROF_REQUEST_TIMEOUT_SECS` 约束 HTTP 请求处理，不等待转换完成；转换由 `ROF_CONVERSION_TIMEOUT_SECS` 独立控制。
 - API Key 应使用足够长的随机值，生产环境建议放在密钥管理系统或环境变量文件中，不要写入仓库或 `config/prod.toml`。
 - CORS 默认关闭；浏览器直连场景再按需配置。
+- 文档默认关闭：未配置 `[docs].enabled` 时不会注册任何文档路径；`config/dev.toml` 开启、`config/prod.toml` 关闭。关闭时 `/api/v1/docs` 与 `/api/v1/openapi.json` 均返回统一的 `404 NOT_FOUND`。
 
 ## 错误码
 
@@ -422,7 +426,7 @@ docs/
 └── deployment.md
 ```
 
-修改 `docs/openapi.json` 后需要重新编译，运行时通过 `include_str!` 提供该文件。`/api/v1/openapi.json` 可直接用于生成客户端或导入 API 工具。
+修改 `docs/openapi.json` 后需要重新编译，运行时通过 `include_str!` 提供该文件。Swagger UI 由 `utoipa-swagger-ui` 静态资源内嵌提供（构建期无需联网），页面在 `/api/v1/docs`，直接加载 `/api/v1/openapi.json`；两者都受 `ROF_DOCS_ENABLED` 控制，生产环境默认不注册。
 
 ## 已知限制
 

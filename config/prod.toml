@@ -31,3 +31,7 @@ allowed_origins = []
 [logging]
 format = "json"
 filter = "rof_convert=info"
+
+[docs]
+# 生产环境保持关闭：不注册 Swagger UI（/api/v1/docs）与 OpenAPI 契约（/api/v1/openapi.json）
+enabled = false

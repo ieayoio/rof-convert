@@ -1,4 +1,7 @@
 //! 路由装配：公开探针/文档与受保护的业务接口分层。
+//!
+//! Swagger UI 与 OpenAPI 契约仅在 `docs.enabled`（`ROF_DOCS_ENABLED`）开启时注册，
+//! 生产环境默认关闭，不会暴露任何文档路径。
 
 use std::time::Duration;
 
@@ -13,13 +16,23 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::{api, config::Config, middleware as app_middleware, state::AppState};
 
+/// Swagger UI 挂载路径（相对 `/api/v1`）。
+pub const SWAGGER_UI_PATH: &str = "/docs";
+/// OpenAPI 契约路径（相对 `/api/v1`）。
+pub const OPENAPI_SPEC_PATH: &str = "/openapi.json";
+
 pub fn build_router(state: AppState) -> Router {
     let config = state.config.clone();
     let max_body_bytes = config
         .max_upload_bytes
         .saturating_add(api::MAX_MULTIPART_OVERHEAD);
 
-    let public_api = Router::new().route("/openapi.json", get(api::openapi_spec));
+    let mut public_api = Router::new();
+    if config.docs_enabled {
+        public_api = public_api
+            .route(OPENAPI_SPEC_PATH, get(api::openapi_spec))
+            .merge(swagger_ui());
+    }
     let protected_api = Router::new()
         .route("/formats", get(api::list_formats))
         .route("/conversions", post(api::create_conversion))
@@ -58,6 +71,19 @@ pub fn build_router(state: AppState) -> Router {
         router = router.layer(cors);
     }
     router
+}
+
+/// Swagger UI 页面：只渲染界面，契约由 `api::openapi_spec` 统一提供。
+fn swagger_ui() -> Router<AppState> {
+    // 浏览器以页面地址为基准解析该地址，因此必须写全 `/api/v1` 前缀。
+    let ui_config = utoipa_swagger_ui::Config::new([utoipa_swagger_ui::Url::new(
+        "rof-convert API",
+        "/api/v1/openapi.json",
+    )]);
+
+    utoipa_swagger_ui::SwaggerUi::new(SWAGGER_UI_PATH)
+        .config(ui_config)
+        .into()
 }
 
 fn cors_layer(config: &Config) -> Option<CorsLayer> {

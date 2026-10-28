@@ -22,6 +22,7 @@
 //! - `ROF_API_KEYS`（逗号分隔；未设置或为空时不覆盖配置文件，最终为空则关闭鉴权）
 //! - `ROF_CORS_ORIGINS`（逗号分隔；未设置或为空时不覆盖配置文件，最终为空则关闭 CORS）
 //! - `ROF_LOG_FORMAT`（`text` 或 `json`）
+//! - `ROF_DOCS_ENABLED`（`true`/`false`；未设置时取配置文件，默认关闭）
 //! - `RUST_LOG` 覆盖配置文件中的日志过滤表达式
 
 use std::{
@@ -52,6 +53,7 @@ const DEFAULT_TEMP_DIR: &str = "./data/tmp";
 const DEFAULT_SOFFICE_BIN: &str = "soffice";
 const DEFAULT_LOG_FORMAT: &str = "text";
 const DEFAULT_LOG_FILTER: &str = "rof_convert=info";
+const DEFAULT_DOCS_ENABLED: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
@@ -76,6 +78,8 @@ pub struct Config {
     pub cors_origins: Vec<String>,
     pub log_format: LogFormat,
     pub log_filter: String,
+    /// 是否暴露 Swagger UI 页面与 `/api/v1/openapi.json` 契约。
+    pub docs_enabled: bool,
 }
 
 impl Config {
@@ -173,6 +177,11 @@ impl Config {
         )
         .trim()
         .to_string();
+        let docs_enabled = pick(
+            environment_patch.docs.enabled,
+            file.docs.enabled,
+            DEFAULT_DOCS_ENABLED,
+        );
 
         if !(1..=1024).contains(&max_upload_mb) {
             return Err(ConfigError::invalid(
@@ -263,6 +272,7 @@ impl Config {
             cors_origins,
             log_format,
             log_filter,
+            docs_enabled,
         })
     }
 
@@ -316,6 +326,7 @@ struct ConfigPatch {
     auth: AuthPatch,
     cors: CorsPatch,
     logging: LoggingPatch,
+    docs: DocsPatch,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -360,6 +371,12 @@ struct CorsPatch {
 struct LoggingPatch {
     format: Option<String>,
     filter: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct DocsPatch {
+    enabled: Option<bool>,
 }
 
 fn pick<T>(environment: Option<T>, file: Option<T>, default: T) -> T {
@@ -426,6 +443,7 @@ fn env_patch() -> Result<ConfigPatch, ConfigError> {
     patch.cors.allowed_origins = env_opt("ROF_CORS_ORIGINS").map(|raw| split_csv(&raw));
     patch.logging.format = env_opt("ROF_LOG_FORMAT");
     patch.logging.filter = env_opt("RUST_LOG");
+    patch.docs.enabled = parse_env_bool("ROF_DOCS_ENABLED")?;
     Ok(patch)
 }
 
@@ -445,6 +463,21 @@ where
         Some(raw) => raw.parse().map(Some).map_err(|error| {
             ConfigError::invalid(name, raw, format!("failed to parse value: {error}"))
         }),
+        None => Ok(None),
+    }
+}
+
+fn parse_env_bool(name: &'static str) -> Result<Option<bool>, ConfigError> {
+    match env_opt(name) {
+        Some(raw) => match raw.to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Ok(Some(true)),
+            "false" | "0" | "no" | "off" => Ok(Some(false)),
+            _ => Err(ConfigError::invalid(
+                name,
+                raw,
+                "expected `true` or `false`",
+            )),
+        },
         None => Ok(None),
     }
 }
@@ -593,6 +626,48 @@ mod tests {
     }
 
     #[test]
+    fn docs_are_disabled_by_default() {
+        let config = Config::resolve(
+            "staging".to_string(),
+            PathBuf::from("config/staging.toml"),
+            ConfigPatch::default(),
+            ConfigPatch::default(),
+        )
+        .expect("defaults should validate");
+        assert!(!config.docs_enabled);
+    }
+
+    #[test]
+    fn docs_follow_configuration_and_environment_overrides() {
+        let mut file = ConfigPatch::default();
+        file.docs.enabled = Some(true);
+        let config = Config::resolve(
+            "dev".to_string(),
+            PathBuf::from("config/dev.toml"),
+            file,
+            ConfigPatch::default(),
+        )
+        .expect("file docs flag should validate");
+        assert!(config.docs_enabled);
+
+        let mut environment_patch = ConfigPatch::default();
+        environment_patch.docs.enabled = Some(false);
+        let config = Config::resolve(
+            "dev".to_string(),
+            PathBuf::from("config/dev.toml"),
+            ConfigPatch {
+                docs: DocsPatch {
+                    enabled: Some(true),
+                },
+                ..ConfigPatch::default()
+            },
+            environment_patch,
+        )
+        .expect("environment docs flag should validate");
+        assert!(!config.docs_enabled);
+    }
+
+    #[test]
     fn normalizes_environment_names() {
         assert_eq!(normalize_environment("development").unwrap(), "dev");
         assert_eq!(normalize_environment("PRODUCTION").unwrap(), "prod");
@@ -624,8 +699,10 @@ mod tests {
             cors_origins: Vec::new(),
             log_format: LogFormat::Text,
             log_filter: "rof_convert=info".to_string(),
+            docs_enabled: false,
         };
         assert_eq!(config.max_upload_mb(), 50);
         assert!(!config.auth_enabled());
+        assert!(!config.docs_enabled);
     }
 }

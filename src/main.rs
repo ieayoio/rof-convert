@@ -68,6 +68,7 @@ async fn run(mut config: Config) -> Result<(), Box<dyn std::error::Error>> {
         environment = %state.config.environment,
         config_file = %state.config.config_file.display(),
         auth_enabled = state.config.auth_enabled(),
+        docs_enabled = state.config.docs_enabled,
         max_concurrency = state.config.max_concurrency,
         max_upload_mb = state.config.max_upload_mb(),
         temp_dir = %state.config.temp_dir.display(),

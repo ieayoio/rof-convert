@@ -68,6 +68,7 @@ ROF_JOB_TTL_SECS=3600
 ROF_API_KEYS=replace-with-a-random-secret
 ROF_SOFFICE_BIN=/usr/bin/soffice
 ROF_LOG_FORMAT=json
+ROF_DOCS_ENABLED=false
 RUST_LOG=rof_convert=info
 ```
 
@@ -185,7 +186,7 @@ server {
 - 默认使用 rsproxy Cargo 镜像与清华 Debian 镜像，适配中国大陆网络
 - 通过 `RUST_IMAGE`、`DEBIAN_IMAGE`、`CARGO_REGISTRY`、`DEBIAN_MIRROR` 构建参数覆盖基础镜像和软件源
 - 非 root 用户、`tini` 作为 PID 1、Docker `HEALTHCHECK`
-- 镜像内包含 `config/prod.toml`，通过 `ROF_ENV=prod` 启动
+- 默认按生产环境构建：镜像内置 `ENV ROF_ENV=prod` 与 `ROF_DOCS_ENABLED=false`，内包含 `config/prod.toml`
 
 构建：
 
@@ -219,7 +220,7 @@ docker run --rm -p 8080:8080 \
 注意：
 
 - 建议在 `.dockerignore` 中排除 `target/` 和 `data/`，避免构建上下文过大。项目已提供 `.dockerignore`。
-- 镜像内包含 `config/prod.toml`，通过 `ROF_ENV=prod` 使用；自定义配置可通过挂载文件并设置 `ROF_CONFIG_FILE` 覆盖。
+- 镜像默认以 `ROF_ENV=prod` 启动，并显式设置 `ROF_DOCS_ENABLED=false`，因此不会暴露 Swagger UI 与 `/api/v1/openapi.json`；自定义配置可通过挂载文件并设置 `ROF_CONFIG_FILE` 覆盖，临时排查文档时用 `-e ROF_DOCS_ENABLED=true` 开启。
 - 生产环境运行时必须通过 `ROF_API_KEYS` 注入密钥；镜像内的 `config/prod.toml` 不保存真实密钥。
 - 挂载卷必须对容器内 UID `10001` 可写；必要时先修正卷权限。
 - 生产环境可增加 `--read-only`、`--tmpfs /tmp`、`--cap-drop=ALL`、`--security-opt no-new-privileges` 和内存/CPU 限制。LibreOffice 需要写入 `/tmp`，`--read-only` 时必须提供可写 tmpfs。
@@ -337,7 +338,7 @@ LibreOffice 和字体加载会打开较多文件，建议 `LimitNOFILE=65536`，
 - 限制入口来源、目标端口和出站流量；如业务允许，限制容器外联。
 - 使用 `no-new-privileges`、能力裁剪、只读根文件系统、cgroup 资源限制。
 - LibreOffice 解析不可信文档，独立 profile 只解决并发锁，不是安全沙箱。处理外部上传时应在容器/虚拟机中隔离，并限制 CPU、内存、磁盘和网络。
-- 如果不需要公开 OpenAPI 契约，可在网关屏蔽 `/api/v1/openapi.json`；该路径当前为公开接口。
+- 生产环境保持 `ROF_DOCS_ENABLED=false`（`config/prod.toml` 默认关闭），此时 `/api/v1/docs` 与 `/api/v1/openapi.json` 均未注册，返回 `404`；需要临时排查时才在受信网络中开启。
 - 健康检查路径通常应仅对集群内部开放。
 - 不要将 `ROF_TEMP_DIR` 放在共享可写目录；任务目录包含用户上传内容和转换结果。
 

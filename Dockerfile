@@ -58,10 +58,14 @@ FROM ${DEBIAN_IMAGE}
 # 使用 HTTP 源是为了不依赖基础镜像预装 ca-certificates，apt 仍会校验 GPG 签名。
 ARG DEBIAN_MIRROR=http://mirrors.ustc.edu.cn
 
+# 镜像默认按生产环境启动：ROF_ENV=prod 读取 config/prod.toml。
+# ROF_DOCS_ENABLED=false 显式关闭 Swagger UI 与 /api/v1/openapi.json，
+# 即使运行时被改成 dev 配置也不会意外暴露文档；排查时可用 -e ROF_DOCS_ENABLED=true 临时开启。
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     HOME=/var/lib/rof-convert \
-    ROF_ENV=prod
+    ROF_ENV=prod \
+    ROF_DOCS_ENABLED=false
 
 # 依赖说明：
 # - libreoffice-*-nogui 与 libreoffice-* 互斥，不要同时安装；/usr/bin/soffice 由 libreoffice-common 提供。

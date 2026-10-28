@@ -30,3 +30,7 @@ allowed_origins = []
 [logging]
 format = "text"
 filter = "rof_convert=info"
+
+[docs]
+# 开启后暴露 Swagger UI（/api/v1/docs）与 OpenAPI 契约（/api/v1/openapi.json）
+enabled = true
