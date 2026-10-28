@@ -16,8 +16,11 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::{api, config::Config, middleware as app_middleware, state::AppState};
 
-/// Swagger UI 挂载路径（相对 `/api/v1`）。
-pub const SWAGGER_UI_PATH: &str = "/docs";
+/// Swagger UI 挂载路径（相对根路径）。
+///
+/// `utoipa-swagger-ui` 对无尾斜杠的路径会发出 `Redirect::to("{path}/")`，该地址是绝对
+/// 路径、不会带上嵌套路由的前缀，因此必须写完整前缀并合并到根路由。
+pub const SWAGGER_UI_PATH: &str = "/api/v1/docs";
 /// OpenAPI 契约路径（相对 `/api/v1`）。
 pub const OPENAPI_SPEC_PATH: &str = "/openapi.json";
 
@@ -29,9 +32,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let mut public_api = Router::new();
     if config.docs_enabled {
-        public_api = public_api
-            .route(OPENAPI_SPEC_PATH, get(api::openapi_spec))
-            .merge(swagger_ui());
+        public_api = public_api.route(OPENAPI_SPEC_PATH, get(api::openapi_spec));
     }
     let protected_api = Router::new()
         .route("/formats", get(api::list_formats))
@@ -59,7 +60,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/readyz", get(api::readyz))
         .nest("/api/v1", api)
         .fallback(api::not_found)
-        .method_not_allowed_fallback(api::method_not_allowed)
+        .method_not_allowed_fallback(api::method_not_allowed);
+
+    // Swagger UI 依赖绝对路径重定向，只能与 `/api/v1` 的前缀在同一层注册。
+    if config.docs_enabled {
+        router = router.merge(swagger_ui());
+    }
+
+    let mut router = router
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
             state.clone(),
