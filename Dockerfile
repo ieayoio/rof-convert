@@ -1,7 +1,10 @@
 # rof-convert 生产镜像
 #
-# 构建（默认使用国内 Cargo 镜像 rsproxy 和清华 Debian 镜像）：
+# 构建（默认使用国内 Cargo 镜像 rsproxy 和中科大 Debian 镜像）：
 #   docker build -t rof-convert:0.1.0 .
+#
+# 运行时依赖只装 LibreOffice 的 no-GUI 变体（*-nogui），本服务只用 headless 模式，
+# 不需要 X11/CUPS/GStreamer 等 GUI 依赖链。
 #
 # 如果 Docker Hub 基础镜像拉取较慢，可通过 --build-arg 指向镜像代理：
 #   docker build \
@@ -51,15 +54,20 @@ RUN touch src/main.rs && cargo build --release --locked
 
 FROM ${DEBIAN_IMAGE}
 
-# Debian 软件源默认走清华镜像；如需其他镜像可覆盖。
+# Debian 软件源默认走中科大镜像；如需其他镜像可覆盖。
 # 使用 HTTP 源是为了不依赖基础镜像预装 ca-certificates，apt 仍会校验 GPG 签名。
-ARG DEBIAN_MIRROR=http://mirrors.tuna.tsinghua.edu.cn
+ARG DEBIAN_MIRROR=http://mirrors.ustc.edu.cn
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     HOME=/var/lib/rof-convert \
     ROF_ENV=prod
 
+# 依赖说明：
+# - libreoffice-*-nogui 与 libreoffice-* 互斥，不要同时安装；/usr/bin/soffice 由 libreoffice-common 提供。
+# - --no-install-recommends 必须保留：LibreOffice 的 recommends 会拉入 default-jre、
+#   libreoffice-java-common、gstreamer 插件组等数百 MB 非必要依赖。
+# - fonts-noto-cjk 是中文渲染必需项（约 91 MB），如需瘦身可换 fonts-wqy-zenhei。
 RUN set -eux; \
     for file in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
         if [ -f "$file" ]; then \
@@ -76,12 +84,26 @@ RUN set -eux; \
         ca-certificates \
         curl \
         tini \
-        libreoffice-writer \
-        libreoffice-calc \
-        libreoffice-impress \
+        libreoffice-writer-nogui \
+        libreoffice-calc-nogui \
+        libreoffice-impress-nogui \
         fontconfig \
         fonts-noto-cjk; \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* \
+        /usr/share/doc/* \
+        /usr/share/man/* \
+        /usr/share/bug/* \
+        /usr/lib/libreoffice/readmes \
+        /usr/lib/libreoffice/help \
+        /usr/lib/libreoffice/share/gallery \
+        /usr/lib/libreoffice/share/template \
+        /usr/lib/libreoffice/share/autotext \
+        /usr/lib/libreoffice/share/Scripts; \
+    HOME=/tmp soffice --headless \
+        -env:UserInstallation=file:///tmp/lo-verify \
+        --version > /dev/null; \
+    rm -rf /tmp/lo-verify
 
 RUN useradd --system --uid 10001 --user-group \
         --home-dir /var/lib/rof-convert \
