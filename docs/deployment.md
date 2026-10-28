@@ -219,9 +219,12 @@ docker build --build-arg LO_MIRROR=https://mirrors.aliyun.com/tdf -t rof-convert
 运行：
 
 ```bash
+# 任务目录挂宿主机目录时，先创建并交给容器内运行用户（UID 10001）
+mkdir -p ./rof-convert-tmp && sudo chown 10001:10001 ./rof-convert-tmp
+
 docker run --rm -p 7654:7654 \
   -e ROF_API_KEYS='replace-with-a-random-secret' \
-  -v rof-convert-tmp:/var/lib/rof-convert/tmp \
+  -v "$PWD/rof-convert-tmp:/var/lib/rof-convert/tmp" \
   rof-convert:0.1.0
 ```
 
@@ -234,7 +237,7 @@ docker run --rm -p 7654:7654 \
 - 建议在 `.dockerignore` 中排除 `target/` 和 `data/`，避免构建上下文过大。项目已提供 `.dockerignore`。
 - 镜像默认以 `ROF_ENV=prod` 启动，并显式设置 `ROF_DOCS_ENABLED=false`，因此不会暴露 Swagger UI 与 `/api/v1/openapi.json`；自定义配置可通过挂载文件并设置 `ROF_CONFIG_FILE` 覆盖，临时排查文档时用 `-e ROF_DOCS_ENABLED=true` 开启。
 - 生产环境运行时必须通过 `ROF_API_KEYS` 注入密钥；镜像内的 `config/prod.toml` 不保存真实密钥。
-- 挂载卷必须对容器内 UID `10001` 可写；必要时先修正卷权限。
+- 挂载的任务目录必须对容器内 UID `10001` 可写；若用 bind mount（宿主机目录），Docker 自动创建的目录属主是 `root`，需先 `sudo chown 10001:10001 <目录>`，否则启动阶段会报 `failed to prepare temp dir ...`；命名卷则首次创建时继承镜像内 `/var/lib/rof-convert/tmp` 的属主与权限。
 - 生产环境可增加 `--read-only`、`--tmpfs /tmp`、`--cap-drop=ALL`、`--security-opt no-new-privileges` 和内存/CPU 限制。LibreOffice 需要写入 `/tmp`，`--read-only` 时必须提供可写 tmpfs。
 - 不要把容器内 `/var/lib/rof-convert` 挂载为只读。
 
@@ -398,6 +401,9 @@ curl -fsS http://127.0.0.1:7654/readyz
 | 现象 | 排查步骤 |
 |---|---|
 | 启动失败，提示 `configuration error` | 检查 `ROF_ENV`、`ROF_CONFIG_FILE` 和工作目录下的 `config/{ROF_ENV}.toml`；TOML 未知字段、格式错误或参数越界都会导致启动失败 |
+| 启动即退出，日志为 `server terminated unexpectedly` + `Permission denied (os error 13)` | 临时目录不可写。容器内使用 `ROF_ENV=dev` 时临时目录是 `./data/tmp`（相对工作目录 `/opt/rof-convert`，属主 root，运行用户 10001 无法创建）；容器内应使用 `ROF_ENV=prod`，或用 `ROF_TEMP_DIR` 指向已授权的挂载目录 |
+| 启动日志出现 `failed to tighten temp dir permissions to 0700` | 目录属主不是运行用户（bind mount 常由 Docker 以 root 创建），模式无法收紧到 0700，服务仍会启动；需隔离时 `sudo chown 10001:10001 <宿主机目录>` |
+| 容器已启动但端口不可达 | 容器内 `ROF_ENV=dev` 只监听 `127.0.0.1`，端口发布转发到容器 IP 无法连通；改用 `ROF_ENV=prod` 或设置 `ROF_HOST=0.0.0.0` |
 | `/readyz` 返回 503 | 查看 `details`；确认 `ROF_SOFFICE_BIN` 绝对路径可执行；确认配置中 `storage.temp_dir` / `ROF_TEMP_DIR` 的属主与权限；确认不是只读文件系统 |
 | 创建任务返回 413 | 检查应用 `ROF_MAX_UPLOAD_MB`，以及 Nginx `client_max_body_size`、Ingress 或网关限制 |
 | 转换失败，error.code=`CONVERSION_FAILED` | 查看服务日志中的 soffice 退出码和 stderr；检查文档是否损坏、是否加密、字体是否缺失 |

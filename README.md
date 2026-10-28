@@ -108,10 +108,11 @@ docker build \
 
 docker run --rm -p 7654:7654 \
   -e ROF_API_KEYS='replace-with-a-random-secret' \
-  -v rof-convert-tmp:/var/lib/rof-convert/tmp \
+  -v "$PWD/rof-convert-tmp:/var/lib/rof-convert/tmp" \
   rof-convert:0.1.0
 ```
 
+- 任务目录使用宿主机目录挂载时，需先 `mkdir -p ./rof-convert-tmp && sudo chown 10001:10001 ./rof-convert-tmp`：容器内运行用户是 UID `10001`，目录属主不对时启动阶段会报 `failed to prepare temp dir ... Permission denied`。
 - 镜像默认按生产环境运行：内置 `ROF_ENV=prod` 与 `ROF_DOCS_ENABLED=false`，Swagger UI（`/api/v1/docs`）和 `/api/v1/openapi.json` 不会暴露；临时排查时用 `-e ROF_DOCS_ENABLED=true` 开启。
 - 容器内已安装 LibreOffice（构建时从官方站点下载的最新稳定版，支持 `md` 等新过滤器）与 CJK 字体，无需在宿主机安装 `soffice`。
 - 构建参数、镜像源、卷权限、只读根文件系统与 Kubernetes 部署见[部署与运维](docs/deployment.md)。
@@ -144,8 +145,8 @@ services:
       ROF_MAX_ACTIVE_JOBS: "200"
       ROF_LOG_FORMAT: json
     volumes:
-      # 任务目录，容器内运行用户为 UID 10001，镜像已按该用户创建目录
-      - rof-convert-tmp:/var/lib/rof-convert/tmp
+      # 任务目录，容器内运行用户为 UID 10001；启动前需确保该目录属主为 10001（见下）
+      - ./rof-convert-tmp:/var/lib/rof-convert/tmp
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7654/healthz"]
@@ -161,19 +162,21 @@ services:
     #   - no-new-privileges:true
     # cap_drop:
     #   - ALL
-
-volumes:
-  rof-convert-tmp:
 ```
 
 ```bash
+# 首次启动前创建任务目录并交给容器内运行用户（UID 10001）
+mkdir -p ./rof-convert-tmp
+sudo chown 10001:10001 ./rof-convert-tmp
+
 docker compose up -d          # 启动
 docker compose logs -f        # 查看日志
-docker compose down           # 停止（保留命名卷）
+docker compose down           # 停止（任务目录保留在宿主机）
 ```
 
+- 任务目录挂载宿主机目录，而不是命名卷：数据、备份和磁盘容量都直接由宿主机管理，卸载容器不会带走。
+- 目录属主必须是 UID `10001`（容器内运行用户）。`docker compose up` 自动创建的目录属主是 `root`，容器内无法写入，启动阶段会报 `failed to prepare temp dir ... Permission denied`；先执行上面的 `mkdir` + `chown`，或事后补做 `sudo chown -R 10001:10001 ./rof-convert-tmp` 再重启。
 - `stop_grace_period` 配合服务端优雅停机：先停止接收新请求，再把正在执行的任务标记为取消并清理工作目录。
-- 使用命名卷时，首次创建会继承镜像内 `/var/lib/rof-convert/tmp` 的权限；若改挂宿主机目录，需确保对 UID `10001` 可写。
 - 其他可调项（`ROF_TEMP_DIR`、`ROF_CONVERSION_TIMEOUT_SECS`、`ROF_JOB_TTL_SECS` 等）见[部署与运维](docs/deployment.md)的环境变量表。
 
 ### 验证服务
@@ -527,6 +530,9 @@ docs/
 | 现象 | 排查方向 |
 |---|---|
 | 启动失败并提示 `configuration error` | 检查 `ROF_ENV`、`ROF_CONFIG_FILE` 和工作目录下的 `config/{ROF_ENV}.toml`；TOML 未知字段或参数越界会被拒绝 |
+| 容器反复重启，日志为 `server terminated unexpectedly` + `Permission denied (os error 13)` | 临时目录不可写。容器内若用 `ROF_ENV=dev`，临时目录是 `./data/tmp`（相对 `/opt/rof-convert`，属主 root，运行用户 10001 无法创建）；容器内应使用 `ROF_ENV=prod`，或显式设置 `ROF_TEMP_DIR=/var/lib/rof-convert/tmp` 并确保该挂载目录属主为 10001 |
+| 启动日志出现 `failed to tighten temp dir permissions to 0700` | 目录属主不是运行用户（常见于 bind mount 由 Docker 以 root 创建），权限无法收紧到 0700，服务仍会启动；需要隔离时执行 `sudo chown 10001:10001 <宿主机目录>` |
+| 容器已启动、端口已发布但请求超时或被拒 | 容器内 `ROF_ENV=dev` 只监听 `127.0.0.1`，Docker 端口发布转发到容器 IP 无法连通；改用 `ROF_ENV=prod` 或设置 `ROF_HOST=0.0.0.0` |
 | `/readyz` 返回 503 | 确认 `soffice` 在 PATH 中或 `ROF_SOFFICE_BIN` 正确；确认配置中的 `storage.temp_dir` / `ROF_TEMP_DIR` 对运行用户可写 |
 | 创建任务返回 413 | 检查 `ROF_MAX_UPLOAD_MB`，以及反向代理/网关的请求体上限 |
 | 转换失败 | 查看服务日志中的 soffice 退出码与 stderr；检查文档是否损坏、字体是否缺失 |
