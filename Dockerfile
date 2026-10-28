@@ -72,6 +72,9 @@ ENV LANG=C.UTF-8 \
 # - --no-install-recommends 必须保留：LibreOffice 的 recommends 会拉入 default-jre、
 #   libreoffice-java-common、gstreamer 插件组等数百 MB 非必要依赖。
 # - fonts-noto-cjk 是中文渲染必需项（约 91 MB），如需瘦身可换 fonts-wqy-zenhei。
+# - Debian bookworm 自带 LibreOffice 7.4，其中没有 Markdown（CommonMark）过滤器，
+#   因此本镜像只提供传统 Office 格式；需要 md 转换时换成自带 LibreOffice 26.2+ 的
+#   基础镜像（或自行安装更新的 LibreOffice），服务启动探测会自动启用该格式。
 RUN set -eux; \
     for file in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
         if [ -f "$file" ]; then \

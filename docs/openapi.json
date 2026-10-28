@@ -3,7 +3,7 @@
   "info": {
     "title": "rof-convert API",
     "version": "0.1.0",
-    "description": "基于 LibreOffice 的无头文档转换服务。上传文件后异步生成转换任务，通过轮询任务状态获取结果并下载。配置 ROF_API_KEYS 后，/api/v1 业务接口需通过 X-API-Key 或 Authorization: Bearer 鉴权。"
+    "description": "基于 LibreOffice 的无头文档转换服务。上传文件后异步生成转换任务，通过轮询任务状态获取结果并下载。配置 ROF_API_KEYS 后，/api/v1 业务接口需通过 X-API-Key 或 Authorization: Bearer 鉴权。源/目标格式矩阵以 /api/v1/formats 的运行时返回为准：Markdown（md）依赖 LibreOffice 26.2 及以上版本，启动探测不到过滤器时不会出现在矩阵中。"
   },
   "servers": [
     {
@@ -815,7 +815,7 @@
             "items": {
               "type": "string"
             },
-            "example": ["pdf", "doc", "odt", "rtf", "txt", "html"]
+            "example": ["pdf", "doc", "odt", "rtf", "txt", "html", "md"]
           }
         }
       },

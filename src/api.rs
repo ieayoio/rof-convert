@@ -30,7 +30,7 @@ use uuid::Uuid;
 use crate::{
     engine,
     error::AppError,
-    formats::{self, SourceFormat},
+    formats::{self, Capabilities, SourceFormat},
     jobs::{Job, JobResult, JobSpec, JobStatus, JobView},
     middleware::RequestId,
     response::ApiCtx,
@@ -103,7 +103,7 @@ pub async fn list_formats(
     Extension(request_id): Extension<RequestId>,
 ) -> Response {
     ApiCtx::new(request_id).ok(json!({
-        "sources": formats::catalog(),
+        "sources": formats::catalog(&state.capabilities),
         "limits": {
             "maxUploadBytes": state.config.max_upload_bytes,
             "maxActiveJobs": state.config.max_active_jobs,
@@ -296,15 +296,15 @@ async fn receive_upload(
                         "`file` field must include a filename",
                     ));
                 }
-                let source_extension =
-                    formats::file_extension(&raw_name).ok_or_else(unsupported_source_format)?;
-                let source = formats::source_format(&source_extension)
-                    .ok_or_else(unsupported_source_format)?;
+                let source_extension = formats::file_extension(&raw_name)
+                    .ok_or_else(|| unsupported_source_format(&state.capabilities))?;
+                let source = formats::source_format(&source_extension, &state.capabilities)
+                    .ok_or_else(|| unsupported_source_format(&state.capabilities))?;
                 let file_name = formats::sanitize_file_name(&raw_name);
 
                 // 目标格式已知时先校验组合，避免为非法请求写入整个文件。
                 if let Some(target) = target_format.as_deref() {
-                    resolve_conversion(source, target)?;
+                    resolve_conversion(source, target, &state.capabilities)?;
                 }
 
                 let job_id = Uuid::new_v4();
@@ -386,7 +386,8 @@ async fn receive_upload(
         uploaded.ok_or_else(|| AppError::invalid_argument("`file` field is required"))?;
     let target =
         target_format.ok_or_else(|| AppError::invalid_argument("`targetFormat` is required"))?;
-    let (target_format, filter) = resolve_conversion(uploaded.source, &target)?;
+    let (target_format, filter) =
+        resolve_conversion(uploaded.source, &target, &state.capabilities)?;
 
     Ok(PendingUpload {
         file: uploaded,
@@ -656,6 +657,7 @@ async fn probe_temp_dir(path: &Path) -> bool {
 fn resolve_conversion(
     source: &SourceFormat,
     raw_target: &str,
+    capabilities: &Capabilities,
 ) -> Result<(String, &'static str), AppError> {
     let target = normalize_target(raw_target)?;
     if target == source.extension {
@@ -663,8 +665,8 @@ fn resolve_conversion(
             "`targetFormat` must differ from the source format",
         ));
     }
-    let supported = formats::supported_targets(source);
-    if !formats::supports(source.extension, &target) {
+    let supported = formats::supported_targets(source, capabilities);
+    if !formats::supports(source.extension, &target, capabilities) {
         return Err(AppError::unsupported_conversion(
             source.extension,
             &target,
@@ -691,11 +693,8 @@ fn normalize_target(raw: &str) -> Result<String, AppError> {
     Ok(target)
 }
 
-fn unsupported_source_format() -> AppError {
-    let supported: Vec<&str> = formats::SOURCE_FORMATS
-        .iter()
-        .map(|format| format.extension)
-        .collect();
+fn unsupported_source_format(capabilities: &Capabilities) -> AppError {
+    let supported = formats::source_extensions(capabilities);
     AppError::unsupported_media_type("uploaded file has an unsupported extension").with_details(
         json!({
             "supportedSourceFormats": supported,

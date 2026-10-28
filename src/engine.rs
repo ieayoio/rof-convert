@@ -6,13 +6,82 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::Stdio,
+    time::Duration,
 };
 
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
-use crate::{config::Config, error::AppError};
+use crate::{config::Config, error::AppError, formats::Capabilities};
+
+/// Markdown 探测的单次上限；仅用于启动阶段，远低于正常转换的超时。
+const CAPABILITY_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 探测 LibreOffice 实际提供的能力。
+///
+/// Markdown（CommonMark）的导入与导出是 LibreOffice 26.2 才有的过滤器，旧版本
+/// 没有对应过滤器。这里用一份最小样例做一次 `md -> md` 往返，同时验证导入与
+/// 导出两个方向；探测失败则视为不支持，避免对调用方宣称不可用的格式。
+pub async fn detect_capabilities(config: &Config) -> Capabilities {
+    let root = config
+        .temp_dir
+        .join(format!("capability-probe-{}", Uuid::new_v4()));
+    let markdown = probe_markdown(config, &root).await;
+    if let Err(error) = tokio::fs::remove_dir_all(&root).await
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            path = %root.display(),
+            error = %error,
+            "failed to clean up capability probe workspace"
+        );
+    }
+    Capabilities { markdown }
+}
+
+async fn probe_markdown(config: &Config, root: &Path) -> bool {
+    let input_path = root.join("probe.md");
+    let prepared = tokio::fs::create_dir_all(root)
+        .await
+        .and_then(|()| std::fs::write(&input_path, b"# rof-convert probe\n\n- markdown\n"));
+    if let Err(error) = prepared {
+        tracing::warn!(error = %error, "failed to prepare Markdown probe file");
+        return false;
+    }
+
+    let output_dir = root.join("out");
+    let profile_dir = root.join("profile");
+    let cancel = CancellationToken::new();
+    let probe = convert(
+        config,
+        &input_path,
+        &output_dir,
+        &profile_dir,
+        "md:Markdown",
+        "md",
+        &cancel,
+    );
+    match tokio::time::timeout(CAPABILITY_PROBE_TIMEOUT, probe).await {
+        Ok(Ok(_)) => true,
+        Ok(Err(error)) => {
+            tracing::info!(
+                error = %error.message,
+                "LibreOffice Markdown filter is unavailable; `md` formats are disabled"
+            );
+            false
+        }
+        Err(_) => {
+            cancel.cancel();
+            tracing::warn!(
+                timeout_secs = CAPABILITY_PROBE_TIMEOUT.as_secs(),
+                "Markdown filter probe timed out; `md` formats are disabled"
+            );
+            false
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct ConversionOutcome {

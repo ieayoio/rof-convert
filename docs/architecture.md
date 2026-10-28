@@ -55,10 +55,10 @@
 | `src/response.rs` | 统一成功响应、响应上下文、无缓存与 `nosniff` 响应头 |
 | `src/error.rs` | 稳定错误码、HTTP 状态映射、错误详情与 `Retry-After` |
 | `src/api.rs` | multipart 上传、格式校验、任务创建、状态查询、下载、删除、探针与格式目录 |
-| `src/formats.rs` | 源/目标格式矩阵、LibreOffice 导出过滤器、文件名清洗、MIME 与展示文件名 |
+| `src/formats.rs` | 源/目标格式矩阵、LibreOffice 导出过滤器、能力开关、文件名清洗、MIME 与展示文件名 |
 | `src/jobs.rs` | 任务模型、状态迁移、内存任务仓储、TTL 过期移除、任务视图 DTO |
 | `src/worker.rs` | 任务排队、并发信号量、调用引擎、成功/失败落库、工作区清理、后台清理任务 |
-| `src/engine.rs` | 组装 soffice 参数、独立 profile、超时与取消、输出文件发现、SHA-256 计算 |
+| `src/engine.rs` | 组装 soffice 参数、独立 profile、超时与取消、输出文件发现、SHA-256 计算、启动能力探测 |
 | `src/state.rs` | 共享 `Config`、`JobStore`、并发信号量和启动时间 |
 
 ## 配置加载
@@ -241,6 +241,16 @@ LibreOffice 支持大量格式，企业场景先限制常用格式更易控。�
 ### 显式导出过滤器
 
 每种源类型使用明确的 LibreOffice 导出过滤器（如 `writer_pdf_Export`、`Calc MS Excel 2007 XML`），避免依赖默认过滤器带来的行为差异。
+
+### 启动时探测格式能力
+
+部分格式依赖较新的 LibreOffice 过滤器：Markdown（CommonMark）的导入与导出自 26.2 起才原生提供，Debian bookworm 等发行版自带的 7.4 没有该过滤器。若在格式矩阵中无条件声明 `md`，旧环境下调用方会拿到 `CONVERSION_FAILED`，而非可预期的 4xx。
+
+因此启动时用一份最小样例做一次 `md -> md` 往返探测（同时覆盖导入与导出），结果存入 `formats::Capabilities` 并随 `AppState` 下发：
+
+- 探测失败或超时（上限 30 秒）则视为不支持，`md` 不进入 `/api/v1/formats`
+- `.md` 上传返回 `415 UNSUPPORTED_MEDIA_TYPE`，转 `md` 返回 `422 UNSUPPORTED_CONVERSION`，`details` 中的候选列表同样不含 `md`
+- 升级 LibreOffice 后只需重启服务，无需改配置
 
 ## 已知限制与扩展方向
 

@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::{
     config::{Config, LogFormat},
+    formats::Capabilities,
     state::AppState,
 };
 
@@ -47,18 +48,27 @@ async fn run(mut config: Config) -> Result<(), Box<dyn std::error::Error>> {
     prepare_temp_dir(&mut config).await?;
     cleanup_stale_workspaces(&config).await;
 
-    if let Some(binary) = engine::find_executable(&config.soffice_bin) {
-        tracing::info!(binary = %binary.display(), "LibreOffice binary located");
-    } else {
-        tracing::warn!(
-            binary = config.soffice_bin,
-            "LibreOffice binary not found; readiness checks will report DOWN"
-        );
-    }
+    let capabilities = match engine::find_executable(&config.soffice_bin) {
+        Some(binary) => {
+            tracing::info!(binary = %binary.display(), "LibreOffice binary located");
+            engine::detect_capabilities(&config).await
+        }
+        None => {
+            tracing::warn!(
+                binary = config.soffice_bin,
+                "LibreOffice binary not found; readiness checks will report DOWN"
+            );
+            Capabilities::NONE
+        }
+    };
+    tracing::info!(
+        markdown = capabilities.markdown,
+        "LibreOffice capabilities detected"
+    );
 
     let listener = TcpListener::bind(config.bind_addr).await?;
     let address = listener.local_addr()?;
-    let state = AppState::new(config);
+    let state = AppState::new(config, capabilities);
     worker::spawn_janitor(state.clone());
     let app = routes::build_router(state.clone());
 
@@ -69,6 +79,7 @@ async fn run(mut config: Config) -> Result<(), Box<dyn std::error::Error>> {
         config_file = %state.config.config_file.display(),
         auth_enabled = state.config.auth_enabled(),
         docs_enabled = state.config.docs_enabled,
+        markdown_enabled = state.capabilities.markdown,
         max_concurrency = state.config.max_concurrency,
         max_upload_mb = state.config.max_upload_mb(),
         temp_dir = %state.config.temp_dir.display(),

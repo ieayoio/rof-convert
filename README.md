@@ -14,6 +14,7 @@
 ## 功能特性
 
 - 支持文档、表格、演示文稿的常见格式互转
+- Markdown（`md`）读写：LibreOffice 26.2+ 启动探测通过后自动启用，旧版本不会对外宣称支持
 - 异步任务：创建任务立即返回 `202`，通过任务状态轮询结果
 - 可选同步转换：单请求内完成转换并流式返回文件，与异步任务共享并发额度
 - 结果下载附带 `SHA-256` 校验值和 RFC 5987 文件名
@@ -34,7 +35,7 @@
 
 | 类别 | 源格式 | 目标格式 |
 |---|---|---|
-| 文档 | `doc`、`docx`、`odt`、`rtf`、`txt`、`html` | `pdf`、`docx`、`doc`、`odt`、`rtf`、`txt`、`html` |
+| 文档 | `doc`、`docx`、`odt`、`rtf`、`txt`、`html`、`md` | `pdf`、`docx`、`doc`、`odt`、`rtf`、`txt`、`html`、`md` |
 | 表格 | `xls`、`xlsx`、`ods`、`csv` | `pdf`、`xlsx`、`xls`、`ods`、`csv`、`html` |
 | 演示 | `ppt`、`pptx`、`odp` | `pdf`、`pptx`、`ppt`、`odp`、`png` |
 
@@ -43,6 +44,7 @@
 - 目标格式列表中若包含源格式，实际请求会被拒绝。
 - 当前不支持 PDF 作为源格式，也不支持宏文档（`docm/xlsm/pptm`）。
 - 演示文稿转 `png` 仅导出首页。
+- `md`（Markdown/CommonMark）依赖 LibreOffice 26.2 及以上版本：启动时会实际探测过滤器，不可用时 `md` 不会出现在格式目录中，相关源文件与目标格式均按不支持处理。
 - 文件类型以扩展名白名单判断，不进行二进制魔数嗅探；处理不可信文件时应配合容器沙箱运行。
 
 ## 快速开始
@@ -51,7 +53,7 @@
 
 - Linux（推荐）或支持 LibreOffice 无头模式的环境
 - Rust `1.85+`（项目使用 edition 2024，当前开发环境为 1.99）
-- LibreOffice，确保 `soffice` 可执行
+- LibreOffice，确保 `soffice` 可执行；需要 Markdown 转换时要求 `26.2+`
 - 可写的临时目录
 - 如转换中文文档，建议安装 CJK 字体
 
@@ -380,7 +382,7 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
   "details": {
     "sourceFormat": "docx",
     "targetFormat": "xlsx",
-    "supportedTargets": ["pdf", "doc", "odt", "rtf", "txt", "html"]
+    "supportedTargets": ["pdf", "doc", "odt", "rtf", "txt", "html", "md"]
   }
 }
 ```
@@ -462,6 +464,7 @@ docs/
 | `/readyz` 返回 503 | 确认 `soffice` 在 PATH 中或 `ROF_SOFFICE_BIN` 正确；确认配置中的 `storage.temp_dir` / `ROF_TEMP_DIR` 对运行用户可写 |
 | 创建任务返回 413 | 检查 `ROF_MAX_UPLOAD_MB`，以及反向代理/网关的请求体上限 |
 | 转换失败 | 查看服务日志中的 soffice 退出码与 stderr；检查文档是否损坏、字体是否缺失 |
+| 格式目录里没有 `md` | LibreOffice 低于 26.2，启动探测未发现 CommonMark 过滤器；升级 LibreOffice 后重启即可 |
 | 转换超时 | 提高 `ROF_CONVERSION_TIMEOUT_SECS`，检查 CPU/内存压力，降低并发 |
 | 返回 503 容量不足 | 降低请求量，调整 `ROF_MAX_CONCURRENCY`/`ROF_MAX_ACTIVE_JOBS`，或增加实例（需先解决状态共享） |
 | 成功结果下载 404 | 任务已删除或超过 `ROF_JOB_TTL_SECS` 保留期 |

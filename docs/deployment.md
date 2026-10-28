@@ -23,7 +23,8 @@
 
 3. 确认临时目录所在磁盘有足够空间，并允许运行用户创建 `0700` 目录。
 4. 如需转换中文文档，安装 CJK 字体（例如 `fonts-noto-cjk`）。
-5. 生产环境建议启用 API Key，并通过 TLS 入口或网关暴露服务。
+5. 需要 Markdown（`md`）转换时，确认 LibreOffice 版本不低于 `26.2`（`soffice --version`）：服务启动时会做一次 `md -> md` 探测，探测不到 CommonMark 过滤器时 `md` 不会出现在 `/api/v1/formats` 中，而不会在实际转换时才报错。
+6. 生产环境建议启用 API Key，并通过 TLS 入口或网关暴露服务。
 
 注意：systemd 的 `PATH` 与交互式 shell 可能不同。建议把 `ROF_SOFFICE_BIN` 配置为绝对路径，例如 `/usr/bin/soffice`。
 
@@ -396,6 +397,7 @@ curl -fsS http://127.0.0.1:7654/readyz
 | 401 Unauthorized | 检查 `ROF_API_KEYS` 是否包含该 Key，请求头是否为 `X-API-Key` 或 Bearer |
 | CORS 预检失败 | 确认 `ROF_CORS_ORIGINS` 包含前端来源；不要让网关与应用重复设置冲突的 CORS 头 |
 | 中文乱码或排版异常 | 安装 CJK 字体；CSV 使用 UTF-8；检查服务器 locale 与字体缓存 |
+| 格式目录中没有 `md` | LibreOffice 低于 26.2 或探测失败（启动日志中的 `LibreOffice capabilities detected markdown=false`）；升级 LibreOffice 后重启 |
 | `failed to start LibreOffice` | 检查二进制架构、执行权限、挂载是否 `noexec`、动态库是否齐全 |
 | 临时目录权限错误 | 确认运行用户对配置中 `storage.temp_dir` / `ROF_TEMP_DIR` 有读写执行权限，目录权限为 `0700` |
 | 磁盘占满 | 检查任务 TTL、异常大文件、失败残留；扩容临时卷并设置磁盘告警 |
