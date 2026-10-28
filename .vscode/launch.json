@@ -1,0 +1,39 @@
+{
+  // 统一把 cwd 固定为项目根目录：config/{ROF_ENV}.toml 与 temp_dir(./data/tmp)
+  // 都是相对服务进程的工作目录解析的，工作目录不对会读不到配置或建错临时目录。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 直接 cargo run（走内置 JS 调试器的 node-terminal 类型），日常联调用。
+      "name": "rof-convert (dev)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cargo run",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "ROF_ENV": "dev",
+        "RUST_LOG": "rof_convert=debug"
+      }
+    },
+    {
+      // CodeLLDB 断点调试，需安装扩展 vadimcn.vscode-lldb。
+      "name": "rof-convert (debug)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=rof-convert"],
+        "filter": {
+          "name": "rof-convert",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "ROF_ENV": "dev",
+        "RUST_LOG": "rof_convert=debug"
+      },
+      "sourceLanguages": ["rust"]
+    }
+  ]
+}
