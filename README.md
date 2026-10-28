@@ -93,6 +93,21 @@ ROF_API_KEYS='replace-with-a-random-secret' \
 
 服务从进程工作目录查找 `config/{ROF_ENV}.toml`。分发二进制时请一并安装 `config/` 目录，或用 `ROF_CONFIG_FILE` 指向绝对路径的配置文件。
 
+### 容器镜像
+
+```bash
+docker build -t rof-convert:0.1.0 .
+
+docker run --rm -p 8080:8080 \
+  -e ROF_API_KEYS='replace-with-a-random-secret' \
+  -v rof-convert-tmp:/var/lib/rof-convert/tmp \
+  rof-convert:0.1.0
+```
+
+- 镜像默认按生产环境运行：内置 `ROF_ENV=prod` 与 `ROF_DOCS_ENABLED=false`，Swagger UI（`/api/v1/docs`）和 `/api/v1/openapi.json` 不会暴露；临时排查时用 `-e ROF_DOCS_ENABLED=true` 开启。
+- 容器内已安装 LibreOffice 与 CJK 字体，无需在宿主机安装 `soffice`。
+- 构建参数、镜像源、卷权限、只读根文件系统与 Kubernetes 部署见[部署与运维](docs/deployment.md)。
+
 ### 验证服务
 
 ```bash
