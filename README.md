@@ -116,6 +116,66 @@ docker run --rm -p 7654:7654 \
 - 容器内已安装 LibreOffice（构建时从官方站点下载的最新稳定版，支持 `md` 等新过滤器）与 CJK 字体，无需在宿主机安装 `soffice`。
 - 构建参数、镜像源、卷权限、只读根文件系统与 Kubernetes 部署见[部署与运维](docs/deployment.md)。
 
+### Docker Compose
+
+`compose.yaml`：
+
+```yaml
+services:
+  rof-convert:
+    # 也可改为 build，直接从源码构建并指定 LibreOffice 版本与镜像
+    # build:
+    #   context: .
+    #   args:
+    #     LO_VERSION: "26.8.1"
+    #     LO_MIRROR: https://mirrors.aliyun.com/tdf
+    image: rof-convert:0.1.0
+    container_name: rof-convert
+    restart: unless-stopped
+    ports:
+      - "7654:7654"
+    environment:
+      ROF_ENV: prod
+      # 生产环境必须注入密钥，可用逗号分隔配置多个；不设置则关闭鉴权
+      ROF_API_KEYS: replace-with-a-random-secret
+      ROF_DOCS_ENABLED: "false"
+      # 并发建议约等于容器 CPU 限额，内存建议不小于 8 GiB
+      ROF_MAX_CONCURRENCY: "16"
+      ROF_MAX_ACTIVE_JOBS: "200"
+      ROF_LOG_FORMAT: json
+    volumes:
+      # 任务目录，容器内运行用户为 UID 10001，镜像已按该用户创建目录
+      - rof-convert-tmp:/var/lib/rof-convert/tmp
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7654/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # 可选加固：LibreOffice 需要可写 /tmp，开启 read_only 时必须同时挂 tmpfs
+    # read_only: true
+    # tmpfs:
+    #   - /tmp
+    # security_opt:
+    #   - no-new-privileges:true
+    # cap_drop:
+    #   - ALL
+
+volumes:
+  rof-convert-tmp:
+```
+
+```bash
+docker compose up -d          # 启动
+docker compose logs -f        # 查看日志
+docker compose down           # 停止（保留命名卷）
+```
+
+- `stop_grace_period` 配合服务端优雅停机：先停止接收新请求，再把正在执行的任务标记为取消并清理工作目录。
+- 使用命名卷时，首次创建会继承镜像内 `/var/lib/rof-convert/tmp` 的权限；若改挂宿主机目录，需确保对 UID `10001` 可写。
+- 其他可调项（`ROF_TEMP_DIR`、`ROF_CONVERSION_TIMEOUT_SECS`、`ROF_JOB_TTL_SECS` 等）见[部署与运维](docs/deployment.md)的环境变量表。
+
 ### 验证服务
 
 ```bash
