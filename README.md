@@ -76,7 +76,7 @@ soffice --version
 ```bash
 cargo build --release
 
-# 默认加载 config/dev.toml，监听 127.0.0.1:8080
+# 默认加载 config/dev.toml，监听 127.0.0.1:7654
 ROF_API_KEYS='replace-with-a-random-secret' \
 ./target/release/rof-convert
 ```
@@ -98,7 +98,7 @@ ROF_API_KEYS='replace-with-a-random-secret' \
 ```bash
 docker build -t rof-convert:0.1.0 .
 
-docker run --rm -p 8080:8080 \
+docker run --rm -p 7654:7654 \
   -e ROF_API_KEYS='replace-with-a-random-secret' \
   -v rof-convert-tmp:/var/lib/rof-convert/tmp \
   rof-convert:0.1.0
@@ -111,10 +111,10 @@ docker run --rm -p 8080:8080 \
 ### 验证服务
 
 ```bash
-curl -s http://127.0.0.1:8080/healthz
-curl -s http://127.0.0.1:8080/readyz
+curl -s http://127.0.0.1:7654/healthz
+curl -s http://127.0.0.1:7654/readyz
 curl -s -H 'X-API-Key: replace-with-a-random-secret' \
-  http://127.0.0.1:8080/api/v1/formats
+  http://127.0.0.1:7654/api/v1/formats
 ```
 
 `readyz` 返回 `503` 时，响应 `details` 会给出 `soffice` 与临时目录的检查结果。
@@ -160,7 +160,7 @@ curl -s -H 'X-API-Key: replace-with-a-random-secret' \
 ### 创建转换任务
 
 ```bash
-curl -sS -X POST 'http://127.0.0.1:8080/api/v1/conversions' \
+curl -sS -X POST 'http://127.0.0.1:7654/api/v1/conversions' \
   -H 'X-API-Key: replace-with-a-random-secret' \
   -H 'X-Request-Id: demo-001' \
   -F 'file=@./report.docx' \
@@ -210,7 +210,7 @@ POST /api/v1/conversions?targetFormat=pdf
 ```bash
 JOB_ID=b8b04f99-9135-493d-b5e4-1d80b49681d6
 curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
-  "http://127.0.0.1:8080/api/v1/conversions/$JOB_ID"
+  "http://127.0.0.1:7654/api/v1/conversions/$JOB_ID"
 ```
 
 状态流转：
@@ -241,7 +241,7 @@ QUEUED -> RUNNING -> SUCCEEDED
 ```bash
 curl -fL -H 'X-API-Key: replace-with-a-random-secret' \
   -o report.pdf \
-  "http://127.0.0.1:8080/api/v1/conversions/$JOB_ID/download"
+  "http://127.0.0.1:7654/api/v1/conversions/$JOB_ID/download"
 ```
 
 下载响应包含：
@@ -259,7 +259,7 @@ curl -fL -H 'X-API-Key: replace-with-a-random-secret' \
 需要在单次请求内拿到结果时，使用同步接口：
 
 ```bash
-curl -fL -X POST 'http://127.0.0.1:8080/api/v1/conversions/sync?targetFormat=pdf' \
+curl -fL -X POST 'http://127.0.0.1:7654/api/v1/conversions/sync?targetFormat=pdf' \
   -H 'X-API-Key: replace-with-a-random-secret' \
   -F 'file=@./report.docx' \
   -o report.pdf
@@ -272,7 +272,7 @@ curl -fL -X POST 'http://127.0.0.1:8080/api/v1/conversions/sync?targetFormat=pdf
 ```bash
 curl -sS -X DELETE \
   -H 'X-API-Key: replace-with-a-random-secret' \
-  "http://127.0.0.1:8080/api/v1/conversions/$JOB_ID"
+  "http://127.0.0.1:7654/api/v1/conversions/$JOB_ID"
 ```
 
 删除会取消排队或运行中的任务、移除任务记录并尽力清理工作目录。删除后再次查询或下载返回 `404`。
@@ -281,7 +281,7 @@ curl -sS -X DELETE \
 
 ```bash
 curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
-  http://127.0.0.1:8080/api/v1/formats
+  http://127.0.0.1:7654/api/v1/formats
 ```
 
 返回各源格式、分类、可用目标格式，以及当前实例的上传大小、并发数、转换超时和结果保留时间。
@@ -323,8 +323,8 @@ curl -sS -H 'X-API-Key: replace-with-a-random-secret' \
 | `ROF_ENV` | `dev` | 环境名，决定默认配置文件；未设置或为空时使用 `dev` |
 | `ROF_CONFIG_FILE` | `config/{ROF_ENV}.toml` | 显式指定配置文件；相对路径相对于进程工作目录 |
 | `ROF_HOST` | `127.0.0.1` | 监听地址，仅接受 IP 地址；生产配置为 `0.0.0.0` |
-| `ROF_PORT` | `8080` | 监听端口 |
-| `ROF_MAX_UPLOAD_MB` | `50` | 单文件上传上限，范围 1-1024 MB |
+| `ROF_PORT` | `7654` | 监听端口 |
+| `ROF_MAX_UPLOAD_MB` | `100` | 单文件上传上限，范围 1-1024 MB |
 | `ROF_CONVERSION_TIMEOUT_SECS` | `120` | 单次 soffice 转换超时，范围 5-3600 秒 |
 | `ROF_REQUEST_TIMEOUT_SECS` | `300` | HTTP 请求超时（包含上传），范围 10-3600 秒 |
 | `ROF_MAX_CONCURRENCY` | `16` | 同时运行的 soffice 进程数，范围 1-64；建议约等于 CPU 核数 |

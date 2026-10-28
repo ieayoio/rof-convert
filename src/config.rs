@@ -11,8 +11,8 @@
 //! 环境变量：
 //! - `ROF_ENV`（默认 `dev`；`development`/`production` 会归一化为 `dev`/`prod`）
 //! - `ROF_CONFIG_FILE`（默认 `config/{ROF_ENV}.toml`）
-//! - `ROF_HOST`（默认 `127.0.0.1`）、`ROF_PORT`（默认 `8080`）
-//! - `ROF_MAX_UPLOAD_MB`（默认 `50`）
+//! - `ROF_HOST`（默认 `127.0.0.1`）、`ROF_PORT`（默认 `7654`）
+//! - `ROF_MAX_UPLOAD_MB`（默认 `100`）
 //! - `ROF_CONVERSION_TIMEOUT_SECS`（默认 `120`）
 //! - `ROF_REQUEST_TIMEOUT_SECS`（默认 `300`）
 //! - `ROF_MAX_CONCURRENCY`（默认 `16`）、`ROF_MAX_ACTIVE_JOBS`（默认 `200`）
@@ -42,8 +42,8 @@ use thiserror::Error;
 const MIB: usize = 1024 * 1024;
 const DEFAULT_ENVIRONMENT: &str = "dev";
 const DEFAULT_HOST: &str = "127.0.0.1";
-const DEFAULT_PORT: u16 = 8080;
-const DEFAULT_MAX_UPLOAD_MB: usize = 50;
+const DEFAULT_PORT: u16 = 7654;
+const DEFAULT_MAX_UPLOAD_MB: usize = 100;
 const DEFAULT_CONVERSION_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_MAX_CONCURRENCY: usize = 16;
@@ -686,8 +686,8 @@ mod tests {
         let config = Config {
             environment: "dev".to_string(),
             config_file: PathBuf::from("config/dev.toml"),
-            bind_addr: SocketAddr::from(([127, 0, 0, 1], 8080)),
-            max_upload_bytes: 50 * MIB,
+            bind_addr: SocketAddr::from(([127, 0, 0, 1], 7654)),
+            max_upload_bytes: 100 * MIB,
             conversion_timeout: Duration::from_secs(120),
             request_timeout: Duration::from_secs(300),
             max_concurrency: 16,
@@ -701,7 +701,7 @@ mod tests {
             log_filter: "rof_convert=info".to_string(),
             docs_enabled: false,
         };
-        assert_eq!(config.max_upload_mb(), 50);
+        assert_eq!(config.max_upload_mb(), 100);
         assert!(!config.auth_enabled());
         assert!(!config.docs_enabled);
     }

@@ -59,9 +59,9 @@ sudo install -m 600 -o root -g root /dev/null /etc/rof-convert.env
 ```bash
 ROF_ENV=prod
 ROF_HOST=127.0.0.1
-ROF_PORT=8080
+ROF_PORT=7654
 ROF_TEMP_DIR=/var/lib/rof-convert/tmp
-ROF_MAX_UPLOAD_MB=50
+ROF_MAX_UPLOAD_MB=100
 ROF_MAX_CONCURRENCY=16
 ROF_MAX_ACTIVE_JOBS=200
 ROF_JOB_TTL_SECS=3600
@@ -162,7 +162,7 @@ server {
     proxy_request_buffering off;
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:7654;
     }
 }
 ```
@@ -211,7 +211,7 @@ docker build \
 运行：
 
 ```bash
-docker run --rm -p 8080:8080 \
+docker run --rm -p 7654:7654 \
   -e ROF_API_KEYS='replace-with-a-random-secret' \
   -v rof-convert-tmp:/var/lib/rof-convert/tmp \
   rof-convert:0.1.0
@@ -235,7 +235,7 @@ containers:
   - name: rof-convert
     image: rof-convert:0.1.0
     ports:
-      - containerPort: 8080
+      - containerPort: 7654
     env:
       - name: ROF_ENV
         value: prod
@@ -249,7 +249,7 @@ containers:
     livenessProbe:
       httpGet:
         path: /healthz
-        port: 8080
+        port: 7654
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 3
@@ -257,7 +257,7 @@ containers:
     readinessProbe:
       httpGet:
         path: /readyz
-        port: 8080
+        port: 7654
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 5
@@ -294,7 +294,7 @@ containers:
               + 结果文件大小 × 保留期内的终态任务数
 ```
 
-`ROF_MAX_ACTIVE_JOBS` 为 200、上传上限为 50 MB 时，最坏情况仅上传文件就可能接近 10 GB。建议：
+`ROF_MAX_ACTIVE_JOBS` 为 200、上传上限为 100 MB 时，最坏情况仅上传文件就可能接近 20 GB。建议：
 
 - 为 `ROF_TEMP_DIR` 单独挂载磁盘或卷并监控使用率；
 - 根据结果大小和业务量调整 `ROF_JOB_TTL_SECS`；
@@ -350,7 +350,7 @@ LibreOffice 和字体加载会打开较多文件，建议 `LimitNOFILE=65536`，
 
 ```bash
 sudo systemctl restart rof-convert
-curl -fsS http://127.0.0.1:8080/readyz
+curl -fsS http://127.0.0.1:7654/readyz
 ```
 
 服务收到 `SIGTERM` 后停止接收新请求，取消内存中的任务并清理工作目录。由于任务不持久化，重启后客户端需要重新创建任务。
